@@ -798,7 +798,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Updating contact info: ' . $domain->getName());
 
         if ($this->config['min_data_set'] === true) {
-            throw new Registrar_Exception("Contact update not possible as the Minimum Data Set is enabled.");
+            throw new Registrar_Exception("To change contact information, please update your account profile.");
         }
 
         $client = $domain->getContactRegistrar();
