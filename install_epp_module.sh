@@ -16,16 +16,16 @@ read -r fossbilling_path
 fossbilling_path=${fossbilling_path:-/var/www}
 
 # Clone the repository to /tmp
-git clone https://github.com/getpinga/fossbilling-epp-rfc /tmp/fossbilling-epp-rfc
+git clone https://github.com/getnamingo/fossbilling-epp-registrar /tmp/fossbilling-epp-registrar
 
 # Rename and move the epp.php file
-mv /tmp/fossbilling-epp-rfc/epp.php "$fossbilling_path/library/Registrar/Adapter/${safe_registry_name}.php"
+mv /tmp/fossbilling-epp-registrar/epp.php "$fossbilling_path/library/Registrar/Adapter/${safe_registry_name}.php"
 
 # Edit the newly copied file
 sed -i "s/Registrar_Adapter_EPP/Registrar_Adapter_${safe_registry_name}/g" "$fossbilling_path/library/Registrar/Adapter/${safe_registry_name}.php"
 
 # Move and rename eppSync.php
-mv /tmp/fossbilling-epp-rfc/eppSync.php "$fossbilling_path/${safe_registry_name}Sync.php"
+mv /tmp/fossbilling-epp-registrar/eppSync.php "$fossbilling_path/${safe_registry_name}Sync.php"
 
 # Edit the renamed eppSync.php
 sed -i "s/\$registrar = \"Epp\";/\$registrar = \"${safe_registry_name}\";/g" "$fossbilling_path/${safe_registry_name}Sync.php"
@@ -33,8 +33,22 @@ sed -i "s/\$registrar = \"Epp\";/\$registrar = \"${safe_registry_name}\";/g" "$f
 # Add the cron job
 (crontab -l 2>/dev/null; echo "0 0,12 * * * php $fossbilling_path/${safe_registry_name}Sync.php") | crontab -
 
+namingo_dir="${fossbilling_path}/namingo"
+
+if [ ! -d "${namingo_dir}/vendor/pinga/tembo" ]; then
+    echo "Installing EPP Client in ${namingo_dir}..."
+
+    mkdir -p "${namingo_dir}"
+    cd "${namingo_dir}" || exit 1
+
+    export COMPOSER_ALLOW_SUPERUSER=1
+    composer require pinga/tembo --no-interaction --no-progress
+else
+    echo "EPP Client already installed in ${namingo_dir}"
+fi
+
 # Clean up
-rm -rf /tmp/fossbilling-epp-rfc
+rm -rf /tmp/fossbilling-epp-registrar
 
 # Final instructions
 echo "Installation complete."

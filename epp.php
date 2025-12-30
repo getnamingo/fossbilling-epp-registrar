@@ -1,125 +1,196 @@
 <?php
 /**
- * EPP RFC Registrar Module for FOSSBilling (https://fossbilling.org/)
+ * Namingo EPP Registrar module for FOSSBilling (https://fossbilling.org/)
  *
- * Developed in 2024 by the Namingo Team (https://namingo.org, help@namingo.org)
- *
- * This project is based on:
- * - The "Generic EPP with DNSsec Registrar Module for WHMCS," originally developed in 2019 by Lilian Rudenco (info@xpanel.com)
- *   and licensed under the Academic Free License (AFL 3.0) - http://opensource.org/licenses/afl-3.0.php
+ * Written in 2024-2025 by Taras Kondratyuk (https://namingo.org)
+ * Based on Generic EPP with DNSsec Registrar Module for WHMCS written in 2019 by Lilian Rudenco (info@xpanel.com)
+ * Work of Lilian Rudenco is under http://opensource.org/licenses/afl-3.0.php Academic Free License (AFL 3.0)
  *
  * @license MIT
  */
 
+$autoload = __DIR__ . '/../../../namingo/vendor/autoload.php';
+
+if (file_exists($autoload)) {
+    require_once $autoload;
+}
+
 use Symfony\Contracts\HttpClient\Exception\HttpExceptionInterface;
+use Pinga\Tembo\EppRegistryFactory;
 
 class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 {
     public $config = array();
-    public $socket;
-    public $isLogined;
 
-    public function __construct($options)
+    public function __construct(array $options)
     {
-        if(isset($options['username'])) {
-            $this->config['username'] = $options['username'];
-        }
-        if(isset($options['password'])) {
-            $this->config['password'] = $options['password'];
-        }
-        if(isset($options['host'])) {
-            $this->config['host'] = $options['host'];
-        }
-        if(isset($options['port'])) {
-            $this->config['port'] = $options['port'];
-        }
-        if(isset($options['registrarprefix'])) {
-            $this->config['registrarprefix'] = $options['registrarprefix'];
-        }
-        if(isset($options['ssl_cert'])) {
-            $this->config['ssl_cert'] = $options['ssl_cert'];
-        }
-        if(isset($options['ssl_key'])) {
-            $this->config['ssl_key'] = $options['ssl_key'];
-        }
-        if(isset($options['ssl_ca'])) {
-            $this->config['ssl_ca'] = $options['ssl_ca'];
-        }
-        if(isset($options['min_data_set'])) {
-            $this->config['min_data_set'] = (bool)$options['min_data_set'];
-        } else {
-            $this->config['min_data_set'] = false;
-        }
-        if(isset($options['use_tls_12'])) {
-            $this->config['use_tls_12'] = (bool)$options['use_tls_12'];
-        } else {
-            $this->config['use_tls_12'] = false;
-        }
+        $this->config = [
+            // EPP credentials
+            'clid'     => $options['clid'] ?? null,
+            'pw' => $options['pw'] ?? null,
+
+            // Connection
+            'host' => $options['host'] ?? null,
+            'port' => isset($options['port']) ? (int) $options['port'] : 700,
+
+            // TLS / SSL
+            'tls_version' => !empty($options['tls_version']),
+            'verify_peer' => !empty($options['verify_peer']),
+            'cafile'      => $options['cafile'] ?? null,
+            'local_cert'    => $options['local_cert'] ?? null,
+            'local_pk'     => $options['local_pk'] ?? null,
+            'passphrase'  => $options['passphrase'] ?? null,
+
+            // Registry behaviour
+            'registrarprefix'      => $options['registrarprefix'] ?? '',
+            'set_authinfo_on_info' => !empty($options['set_authinfo_on_info']),
+            'min_data_set'         => !empty($options['min_data_set']),
+            'gtld'                 => !empty($options['gtld']),
+            'registry_profile'     => $options['registry_profile'] ?? 'generic',
+
+            // Extensions
+            'login_extensions' => isset($options['login_extensions']) && $options['login_extensions'] !== ''
+                ? array_map('trim', explode(',', $options['login_extensions']))
+                : [],
+            
+            // EURid
+            'eurid_billing_contact' => $options['eurid_billing_contact'] ?? null,
+        ];
     }
 
     public function getTlds()
     {
         return array();
     }
-    
+
     public static function getConfig()
     {
-        return array(
-            'label' => 'An EPP registry module allows registrars to manage and register domain names using the Extensible Provisioning Protocol (EPP). All details below are typically provided by the domain registry and are used to authenticate your account when connecting to the EPP server.',
-            'form'  => array(
-                'username' => array('text', array(
-                    'label' => 'EPP Server Username',
-                    'required' => true,
-                ),
-                ),
-                'password' => array('password', array(
-                    'label' => 'EPP Server Password',
-                    'required' => true,
+        return [
+            'label' => 'Connect FOSSBilling to any domain registry using the standard EPP protocol.',
+            'form'  => [
+                'host' => ['text', [
+                    'label'       => 'EPP Hostname:',
+                    'required'    => true,
+                    'description' => 'Registry EPP endpoint hostname (e.g. epp.registry.tld).',
+                ]],
+
+                'port' => ['text', [
+                    'label'       => 'EPP Port:',
+                    'required'    => true,
+                    'default'     => '700',
+                    'description' => 'TCP port used by the registry (700 is the standard EPP port, but some registries use a different value).',
+                ]],
+
+                'tls_version' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label'        => 'Prefer TLS 1.3:',
+                    'description'  => 'Use TLS 1.3 when available; falls back to older TLS if the registry does not support it.',
+                ]],
+
+                'verify_peer' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label'        => 'Verify TLS Certificate:',
+                    'description'  => 'Validate the registry server certificate (recommended). Disable only for test environments.',
+                ]],
+
+                'cafile' => ['text', [
+                    'label'       => 'CA Bundle Path',
+                    'required'    => false,
+                    'default'     => '',
+                    'description' => 'Path to a CA bundle file used to verify the registry certificate (required when “Verify TLS Certificate” is enabled).',
+                ]],
+
+                'local_cert' => ['text', [
+                    'label'       => 'Client Certificate (PEM)',
+                    'required'    => true,
+                    'default'     => 'cert.pem',
+                    'description' => 'Path to your registrar client certificate in PEM format.',
+                ]],
+
+                'local_pk' => ['text', [
+                    'label'       => 'Client Private Key',
+                    'required'    => true,
+                    'default'     => 'key.pem',
+                    'description' => 'Path to your private key file (PEM).',
+                ]],
+
+                'passphrase' => ['password', [
+                    'label'          => 'Private Key Passphrase',
+                    'required'       => false,
+                    'default'        => '',
                     'renderPassword' => true,
-                ),
-                ),
-                'host' => array('text', array(
-                    'label' => 'EPP Server Host',
-                    'required' => true,
-                ),
-                ),
-                'port' => array('text', array(
-                    'label' => 'EPP Server Port',
-                    'required' => true,
-                ),
-                ),
-                'registrarprefix' => array('text', array(
-                    'label' => 'Registrar Prefix',
-                    'required' => true,
-                ),
-                ),
-                'ssl_cert' => array('text', array(
-                    'label' => 'SSL Certificate Path',
-                    'required' => true,
-                ),
-                ),
-                'ssl_key' => array('text', array(
-                    'label' => 'SSL Key Path',
-                    'required' => true,
-                ),
-                ),
-                'ssl_ca' => array('text', array(
-                    'label' => 'SSL CA Path',
-                    'required' => false,
-                ),
-                ),
-                'min_data_set' => array('radio', array(
-                    'multiOptions' => array('1'=>'Yes', '0'=>'No'),
-                    'label' => 'Enable Minimum Data Set',
-                ),
-                ),
-                'use_tls_12' => array('radio', array(
-                    'multiOptions' => array('1'=>'Yes', '0'=>'No'),
-                    'label' => 'Use TLS 1.2 instead of 1.3',
-                ),
-                ),
-            ),
-        );
+                    'description'    => 'Passphrase for the private key (leave blank if the key is not encrypted).',
+                ]],
+
+                'clid' => ['text', [
+                    'label'       => 'Client ID (clID)',
+                    'required'    => true,
+                    'description' => 'Registrar identifier provided by the registry.',
+                ]],
+
+                'pw' => ['password', [
+                    'label'          => 'Client Password',
+                    'required'       => true,
+                    'renderPassword' => true,
+                    'description'    => 'EPP login password provided by the registry.',
+                ]],
+
+                'registrarprefix' => ['text', [
+                    'label'       => 'Object ID Prefix',
+                    'required'    => true,
+                    'description' => 'Prefix used when generating registry object IDs (contacts/hosts). Use the value required by the registry, if any.',
+                ]],
+
+                'registry_profile' => ['select', [
+                    'label'        => 'Registry Profile',
+                    'required'     => true,
+                    'default'      => 'generic',
+                    'multiOptions' => [
+                        'generic' => 'generic',
+                        'EU'      => 'EU',
+                        'MX'      => 'MX',
+                        'UA'      => 'UA',
+                        'VRSN'    => 'VRSN',
+                    ],
+                    'description'  => 'Select the registry profile matching the registry implementation. List of profiles: https://github.com/getnamingo/whmcs-epp-registrar',
+                ]],
+
+                'set_authinfo_on_info' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label'        => 'Set AuthInfo on Request',
+                    'description'  => 'Enable if the registry does not return the transfer code on domain info and requires setting it manually first.',
+                ]],
+
+                'login_extensions' => ['textarea', [
+                    'label'       => 'EPP Login Extensions',
+                    'required'    => false,
+                    'default'     => '',
+                    'description' =>
+                        "Comma-separated EPP login extension URIs.\n" .
+                        "Leave empty to use defaults.\n" .
+                        "Example: urn:ietf:params:xml:ns:secDNS-1.1, urn:ietf:params:xml:ns:rgp-1.0",
+                ]],
+
+                'gtld' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label'        => 'gTLD Registry',
+                    'description'  => 'Enable this if the registry is a generic TLD (gTLD) operated under ICANN policies.',
+                ]],
+
+                'min_data_set' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label'        => 'Enable Minimum Data Set',
+                    'description'  => 'Use the ICANN Minimum Data Set.',
+                ]],
+
+                'eurid_billing_contact' => ['text', [
+                    'label'       => 'EURid Billing Contact ID',
+                    'required'    => false,
+                    'default'     => '',
+                    'description' => 'Optional billing contact handle for EURid. Used only when EPP profile is EU.',
+                ]],
+            ],
+        ];
     }
     
     public function isDomaincanBeTransferred(Registrar_Domain $domain)
@@ -131,46 +202,43 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     public function isDomainAvailable(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Checking domain availability: ' . $domain->getName());
-        $s    = $this->connect();
-        $this->login();
-        $from = $to = array();
-        $from[] = '/{{ name }}/';
-        $to[] = htmlspecialchars($domain->getName());
-        $from[] = '/{{ clTRID }}/';
-        $clTRID = str_replace('.', '', round(microtime(1) , 3));
-        $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-check-' . $clTRID);
-        $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-        <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-          xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-          <command>
-            <check>
-              <domain:check
-                xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-                xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-                <domain:name>{{ name }}</domain:name>
-              </domain:check>
-            </check>
-            <clTRID>{{ clTRID }}</clTRID>
-          </command>
-        </epp>');
+        
+        try {
+            $epp = $this->epp_client();
 
-        $r = $this->write($xml, __FUNCTION__);
-        $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->chkData;
-        $reason = (string)$r->cd[0]->reason;
+            $domainCheck = $epp->domainCheck([
+                'domains' => [$domain->getName()],
+            ]);
 
-        if ($reason)
-        {
-            return false;
-        } else {
-            return true;
+            if (!empty($domainCheck['error'])) {
+                throw new Registrar_Exception((string)$domainCheck['error']);
+            }
+
+            $item = ($domainCheck['domains'][1] ?? null);
+
+            if (!$item || empty($item['name'])) {
+                throw new Registrar_Exception('Domain check failed: empty response');
+            }
+
+            $avail = filter_var($item['avail'] ?? false, FILTER_VALIDATE_BOOL);
+            $reason = (string)($item['reason'] ?? '');
+
+            if ($avail) {
+                return true;
+            }
+
+            throw new Registrar_Exception(
+                'Domain is not available' . ($reason ? ': ' . $reason : '')
+            );
+        } catch (Registrar_Exception  $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain availability check failed. Please try again later.'
+            );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-        if (!empty($s))
-        {
-            $this->logout();
-        }
-
-        return true;
     }
 
     public function modifyNs(Registrar_Domain $domain)
@@ -180,45 +248,85 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Ns2: ' . $domain->getNs2());
         $this->getLog()->debug('Ns3: ' . $domain->getNs3());
         $this->getLog()->debug('Ns4: ' . $domain->getNs4());
-        $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $add = $rem = array();
-            $i = 0;
-            foreach($r->ns->hostObj as $ns) {
-                $i++;
+            $epp = $this->epp_client();
+
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+
+            if (isset($info['error'])) {
+                throw new Registrar_Exception($info['error']);
+            }
+
+            $current = [];
+            foreach (($info['ns'] ?? []) as $ns) {
                 $ns = (string)$ns;
-                if (!$ns) {
+                if ($ns !== '') {
+                    $current[] = $ns;
+                }
+            }
+
+            $add = [];
+            foreach (['ns1','ns2','ns3','ns4'] as $k) {
+                $v = $domain->{'get' . ucfirst($k)}();
+                if (empty($v)) {
                     continue;
                 }
 
-                $rem["ns{$i}"] = $ns;
+                $v = (string)$v;
+
+                if (in_array($v, $current, true)) {
+                    continue;
+                }
+
+                $add[$k] = $v;
             }
 
+            $profile = $this->config['registry_profile'] ?? 'generic';
+            if ($profile !== 'EU') {
+                if (!empty($add)) {
+                    foreach ($add as $k => $nsName) {
+                        $nsName = trim((string)$nsName);
+                        if ($nsName === '') {
+                            continue;
+                        }
+
+                        $hostCheck = $epp->hostCheck([
+                            'hostname' => $nsName,
+                        ]);
+
+                        if (!empty($hostCheck['error'])) {
+                            throw new Registrar_Exception((string)$hostCheck['error']);
+                        }
+
+                        $items = array_values($hostCheck['hosts'] ?? []);
+                        $item  = $items[0] ?? null;
+
+                        if (!$item) {
+                            continue;
+                        }
+
+                        $avail = filter_var($item['avail'] ?? false, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+                        $avail = $avail ?? ((int)($item['avail'] ?? 0) === 1);
+
+                        if (!$avail) {
+                            continue;
+                        }
+
+                        // host:create
+                        $hostCreate = $epp->hostCreate([
+                            'hostname' => $nsName,
+                        ]);
+
+                        if (!empty($hostCreate['error'])) {
+                            throw new Registrar_Exception((string)$hostCreate['error']);
+                        }
+                    }
+                }
+            }
+            
+            $final = [];
             foreach (range(1, 4) as $i) {
               $k = "getNs$i";
               $v = $domain->{$k}();
@@ -226,168 +334,116 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 continue;
               }
 
-              if ($k0 = array_search($v, $rem)) {
-                unset($rem[$k0]);
-              } else {
-                $add["ns$i"] = $v;
-              }
+              $final["ns$i"] = $v;
             }
 
-            if (!empty($add) || !empty($rem)) {
-                $from = $to = array();
-                $text = '';
-                foreach($add as $k => $v) {
-                    $text.= '<domain:hostObj>' . $v . '</domain:hostObj>' . "\n";
+            if ($profile === 'EU') {
+                $payload = [
+                    'domainname' => $domain->getName(),
+                    'nss'        => [],
+                ];
+
+                foreach (array_values($final) as $host) {
+                    $ns = ['hostName' => $host];
+
+                    if (preg_match('/\.eu$/i', $host)) {
+                        $a = @dns_get_record($host, DNS_A);
+                        if (!empty($a[0]['ip'])) {
+                            $ns['ipv4'] = $a[0]['ip'];
+                        }
+
+                        $aaaa = @dns_get_record($host, DNS_AAAA);
+                        if (!empty($aaaa[0]['ipv6'])) {
+                            $ns['ipv6'] = $aaaa[0]['ipv6'];
+                        }
+                    }
+
+                    $payload['nss'][] = $ns;
                 }
 
-                $from[] = '/{{ add }}/';
-                $to[] = (empty($text) ? '' : "<domain:add><domain:ns>\n{$text}</domain:ns></domain:add>\n");
-                $text = '';
-                foreach($rem as $k => $v) {
-                    $text.= '<domain:hostObj>' . $v . '</domain:hostObj>' . "\n";
+                $domainUpdateNS = $epp->domainUpdateNS($payload);
+            } else {
+                $payload = ['domainname' => $domain->getName()];
+
+                foreach (array_values($final) as $idx => $host) {
+                    $payload['ns' . ($idx + 1)] = $host;
                 }
 
-                $from[] = '/{{ rem }}/';
-                $to[] = (empty($text) ? '' : "<domain:rem><domain:ns>\n{$text}</domain:ns></domain:rem>\n");
-                $from[] = '/{{ name }}/';
-                $to[] = htmlspecialchars($domain->getName());
-                $from[] = '/{{ clTRID }}/';
-                $clTRID = str_replace('.', '', round(microtime(1), 3));
-                $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-update-' . $clTRID);
-                $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <update>
-          <domain:update
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name>{{ name }}</domain:name>
-        {{ add }}
-        {{ rem }}
-          </domain:update>
-        </update>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-                $r = $this->write($xml, __FUNCTION__);
+                $domainUpdateNS = $epp->domainUpdateNS($payload);
             }
-        }
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            if (!empty($domainUpdateNS['error'])) {
+                throw new Registrar_Exception((string)$domainUpdateNS['error']);
+            }
+
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Nameserver modification failed. Please try again later.'
             );
-            throw new Registrar_Exception('Error: ' . $e->getMessage());
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function transferDomain(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Transfering domain: ' . $domain->getName());
         $this->getLog()->debug('Epp code: ' . $domain->getEpp());
-        $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ authInfo_pw }}/';
-            $to[] = htmlspecialchars($domain->getEpp());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-transfer-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-  <command>
-    <transfer op="request">
-      <domain:transfer
-       xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
-        <domain:name>{{ name }}</domain:name>
-        <domain:period unit="y">1</domain:period>
-        <domain:authInfo>
-          <domain:pw>{{ authInfo_pw }}</domain:pw>
-        </domain:authInfo>
-      </domain:transfer>
-    </transfer>
-    <clTRID>{{ clTRID }}</clTRID>
-  </command>
-</epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->trnData;
-        }
+            $epp = $this->epp_client();
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            $domainTransfer = $epp->domainTransfer([
+                'domainname' => $domain->getName(),
+                'years'      => 1,
+                'authInfoPw' => $domain->getEpp(),
+                'op'         => 'request',
+            ]);
+
+            if (isset($domainTransfer['error'])) {
+                throw new Registrar_Exception($domainTransfer['error']);
+            }
+            
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain transfer failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function getDomainDetails(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Getting domain details: ' . $domain->getName());
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $crDate = (string)$r->crDate;
-            $exDate = (string)$r->exDate;
-            $eppcode = (string)$r->authInfo->pw;
+            $epp = $this->epp_client();
+        
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
 
-            $status = array();
-            $i = 0;
-            foreach ($r->status as $e) {
-                $i++;
-                $status[$i] = (string)$e->attributes()->s;
+            if (!empty($info['error'])) {
+                throw new Registrar_Exception((string)$info['error']);
             }
-            $ns = array();
-            $i = 0;
-            if (isset($r->ns->hostObj) && (is_array($r->ns->hostObj) || is_object($r->ns->hostObj))) {
-                foreach ($r->ns->hostObj as $hostObj) {
-                    $i++;
-                    $ns[$i] = (string)$hostObj;
+        
+            $crDate = (string)$info['crDate'];
+            $exDate = (string)$info['exDate'];
+            $eppcode = (string)$info['authInfo'];
+
+            $ns = [];
+            $i = 1;
+            foreach (($info['ns'] ?? []) as $nsa) {
+                if ($nsa === null || $nsa === '') {
+                    continue;
                 }
-            } else {
-                $ns = [];
+                $ns[$i] = (string) $nsa;
+                $i++;
             }
 
             $crDate = strtotime($crDate);
@@ -401,396 +457,251 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $domain->setNs2(isset($ns[1]) ? $ns[1] : '');
             $domain->setNs3(isset($ns[2]) ? $ns[2] : '');
             $domain->setNs4(isset($ns[3]) ? $ns[3] : '');
-        }
 
-        catch(exception $e) {
-            throw new Registrar_Exception('Error: ' . $e->getMessage());
+            return $domain;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain information failed. Please try again later.'
+            );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $domain;
     }
 
     public function deleteDomain(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Removing domain: ' . $domain->getName());
-        $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-delete-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-  <command>
-    <delete>
-      <domain:delete
-       xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
-        <domain:name>{{ name }}</domain:name>
-      </domain:delete>
-    </delete>
-    <clTRID>{{ clTRID }}</clTRID>
-  </command>
-</epp>');
-            $r = $this->write($xml, __FUNCTION__);
-        }
+            $epp = epp_client($params);
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            $domainDelete = $epp->domainDelete([
+                'domainname' => $domain->getName(),
+            ]);
+
+            if (isset($domainDelete['error'])) {
+                throw new Registrar_Exception($domainDelete['error']);
+            }
+
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain deletion failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function registerDomain(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Registering domain: ' . $domain->getName(). ' for '.$domain->getRegistrationPeriod(). ' years');
         $client = $domain->getContactRegistrar();
-
-        $return = array();
+        
         try {
-            $s = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-check-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <check>
-          <domain:check
-            xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-            xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name>{{ name }}</domain:name>
-          </domain:check>
-        </check>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->chkData;
-            $reason = (string)$r->cd[0]->reason;
-            if (!$reason) {
-                $reason = 'Domain is not available';
+            $epp = $this->epp_client();
+
+            $domainCheck = $epp->domainCheck([
+                'domains' => [$domain->getName()],
+            ]);
+
+            if (!empty($domainCheck['error'])) {
+                throw new Registrar_Exception((string)$domainCheck['error']);
             }
 
-            if (0 == (int)$r->cd[0]->name->attributes()->avail) {
-                throw new Registrar_Exception($r->cd[0]->name . ' ' . $reason);
+            $item = ($domainCheck['domains'][1] ?? null);
+
+            if (!$item || empty($item['name'])) {
+                throw new Registrar_Exception('Domain check failed: empty response');
+            }
+
+            $avail = filter_var($item['avail'] ?? false, FILTER_VALIDATE_BOOL);
+            $reason = (string)($item['reason'] ?? '');
+
+            if (!$avail) {
+                throw new Registrar_Exception(
+                    'Domain is not available' . ($reason ? ': ' . $reason : '')
+                );
             }
             
-            if ($this->config['min_data_set'] === false) {
-                // contact:create
-                $from = $to = array();
-                $from[] = '/{{ id }}/';
-                $c_id = strtoupper($this->generateRandomString());
-                $to[] = $c_id;
-                $from[] = '/{{ name }}/';
-                $to[] = htmlspecialchars($client->getFirstName() . ' ' . $client->getLastName());
-                $from[] = '/{{ org }}/';
-                $to[] = htmlspecialchars($client->getCompany());
-                $from[] = '/{{ street1 }}/';
-                $to[] = htmlspecialchars($client->getAddress1());
-                $from[] = '/{{ city }}/';
-                $to[] = htmlspecialchars($client->getCity());
-                $from[] = '/{{ state }}/';
-                $to[] = htmlspecialchars($client->getState());
-                $from[] = '/{{ postcode }}/';
-                $to[] = htmlspecialchars($client->getZip());
-                $from[] = '/{{ country }}/';
-                $to[] = htmlspecialchars($client->getCountry());
-                $from[] = '/{{ phonenumber }}/';
-                $to[] = htmlspecialchars('+'.$client->getTelCc().'.'.$client->getTel());
-                $from[] = '/{{ email }}/';
-                $to[] = htmlspecialchars($client->getEmail());
-                $from[] = '/{{ authInfo }}/';
-                $to[] = htmlspecialchars($this->generateObjectPW());
-                $from[] = '/{{ clTRID }}/';
-                $clTRID = str_replace('.', '', round(microtime(1), 3));
-                $to[] = htmlspecialchars($this->config['registrarprefix'] . '-contact-create-' . $clTRID);
-                $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-        <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-          xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-          <command>
-            <create>
-              <contact:create
-               xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
-                <contact:id>{{ id }}</contact:id>
-                <contact:postalInfo type="int">
-                  <contact:name>{{ name }}</contact:name>
-                  <contact:org>{{ org }}</contact:org>
-                  <contact:addr>
-                    <contact:street>{{ street1 }}</contact:street>
-                    <contact:street></contact:street>
-                    <contact:street></contact:street>
-                    <contact:city>{{ city }}</contact:city>
-                    <contact:sp>{{ state }}</contact:sp>
-                    <contact:pc>{{ postcode }}</contact:pc>
-                    <contact:cc>{{ country }}</contact:cc>
-                  </contact:addr>
-                </contact:postalInfo>
-                <contact:voice>{{ phonenumber }}</contact:voice>
-                <contact:fax></contact:fax>
-                <contact:email>{{ email }}</contact:email>
-                <contact:authInfo>
-                  <contact:pw>{{ authInfo }}</contact:pw>
-                </contact:authInfo>
-              </contact:create>
-            </create>
-            <clTRID>{{ clTRID }}</clTRID>
-          </command>
-        </epp>');
-                $r = $this->write($xml, __FUNCTION__);
-                $r = $r->response->resData->children('urn:ietf:params:xml:ns:contact-1.0')->creData;
-                $contacts = $r->id;
-            }
+            if (empty($this->config['gtld']) && empty($this->config['min_data_set'])) {
+                $contacts = [];
+                
+                $contactTypeMap = [
+                    'EU'      => ['registrant', 'tech'],                 // EURid
+                    'generic'=> ['registrant', 'admin', 'tech', 'billing'],
+                    'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
+                ];
 
-            //host create
-            foreach (['ns1', 'ns2', 'ns3', 'ns4'] as $ns) {
-                if ($domain->{'get' . ucfirst($ns)}()) {
-                    $from = $to = array();
-                    $from[] = '/{{ name }}/';
-                    $to[] = $domain->{'get' . ucfirst($ns)}();
-                    $from[] = '/{{ clTRID }}/';
-                    $clTRID = str_replace('.', '', round(microtime(1), 3));
-                    $to[] = htmlspecialchars($this->config['registrarprefix'] . '-host-check-' . $clTRID);
-                    $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-                    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-                      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-                      <command>
-                        <check>
-                          <host:check
-                            xmlns:host="urn:ietf:params:xml:ns:host-1.0"
-                            xsi:schemaLocation="urn:ietf:params:xml:ns:host-1.0 host-1.0.xsd">
-                            <host:name>{{ name }}</host:name>
-                          </host:check>
-                        </check>
-                        <clTRID>{{ clTRID }}</clTRID>
-                      </command>
-                    </epp>');
-                    $r = $this->write($xml, __FUNCTION__);
-                    $r = $r->response->resData->children('urn:ietf:params:xml:ns:host-1.0')->chkData;
+                $profile = $this->config['registry_profile'] ?? 'generic';
 
-                    if (0 == (int)$r->cd[0]->name->attributes()->avail) {
-                        continue;
+                $contactTypes = $contactTypeMap[$profile]
+                    ?? $contactTypeMap['generic'];
+
+                foreach ($contactTypes as $i => $contactType) {
+
+                    $id = strtoupper($this->epp_random_contact_id());
+                    $authInfoPw = $this->epp_random_auth_pw();
+
+                    $contactCreate = $epp->contactCreate([
+                        'id'              => $id,
+                        'type'            => 'int',
+                        'firstname'       => $client->getFirstName() ?? '',
+                        'lastname'        => $client->getLastName() ?? '',
+                        'companyname'     => $client->getCompany() ?? '',
+                        'address1'        => $client->getAddress1() ?? '',
+                        'address2'        => $client->getAddress2() ?? '',
+                        'city'            => $client->getCity() ?? '',
+                        'state'           => $client->getState() ?? '',
+                        'postcode'        => $client->getZip() ?? '',
+                        'country'         => $client->getCountry() ?? '',
+                        'fullphonenumber' => '+'.$client->getTelCc().'.'.$client->getTel() ?? '',
+                        'email'           => $client->getEmail() ?? '',
+                        'authInfoPw'      => $authInfoPw,
+                        // EU-only extras
+                        'euType'    => ($profile === 'EU') ? $contactType : null,
+                    ]);
+
+                    if (!empty($contactCreate['error'])) {
+                        throw new Registrar_Exception((string)$contactCreate['error']);
                     }
 
-                    $from = $to = array();
-                    $from[] = '/{{ name }}/';
-                    $to[] = $domain->{'get' . ucfirst($ns)}();
-                    $from[] = '/{{ clTRID }}/';
-                    $clTRID = str_replace('.', '', round(microtime(1), 3));
-                    $to[] = htmlspecialchars($this->config['registrarprefix'] . '-host-create-' . $clTRID);
-                    $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-                    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-                      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-                      <command>
-                        <create>
-                          <host:create
-                           xmlns:host="urn:ietf:params:xml:ns:host-1.0">
-                            <host:name>{{ name }}</host:name>
-                          </host:create>
-                        </create>
-                        <clTRID>{{ clTRID }}</clTRID>
-                      </command>
-                    </epp>');
-                    $r = $this->write($xml, __FUNCTION__);
+                    $createdId = $contactCreate['id'] ?? $id;
+                    $contacts[$i + 1] = $createdId;
                 }
             }
 
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ period }}/';
-            $to[] = htmlspecialchars($domain->getRegistrationPeriod());
-            if($domain->getNs1()) {
-            $from[] = '/{{ ns1 }}/';
-            $to[] = htmlspecialchars($domain->getNs1());
-            } else {
-            $from[] = '/{{ ns1 }}/';
-            $to[] = '';
+            $profile = $this->config['registry_profile'] ?? 'generic';
+            if ($profile !== 'EU') {
+                foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
+                    $hostname = $domain->{'get' . ucfirst($nsKey)}();
+                    if (empty($hostname)) {
+                        continue;
+                    }
+
+                    $hostCheck = $epp->hostCheck([
+                        'hostname' => $hostname,
+                    ]);
+
+                    if (!empty($hostCheck['error'])) {
+                        throw new Registrar_Exception((string)$hostCheck['error']);
+                    }
+
+                    $items = array_values($hostCheck['hosts'] ?? []);
+                    $item  = $items[0] ?? null;
+
+                    if (!$item) {
+                        continue;
+                    }
+
+                    $avail = filter_var($item['avail'] ?? false, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+                    $avail = $avail ?? ((int)($item['avail'] ?? 0) === 1);
+
+                    if (!$avail) {
+                        continue;
+                    }
+
+                    $hostCreate = $epp->hostCreate([
+                        'hostname' => $hostname,
+                    ]);
+
+                    if (!empty($hostCreate['error'])) {
+                        throw new Registrar_Exception((string)$hostCreate['error']);
+                    }
+                }
             }
-            if($domain->getNs2()) {
-            $from[] = '/{{ ns2 }}/';
-            $to[] = htmlspecialchars($domain->getNs2());
-            } else {
-            $from[] = '/{{ ns2 }}/';
-            $to[] = '';
+
+            $period     = (int)($domain->getRegistrationPeriod() ?? 1);
+
+            $nss = [];
+            foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
+                $hostname = $domain->{'get' . ucfirst($nsKey)}();
+                if (!empty($hostname)) {
+                    $nss[] = $hostname;
+                }
             }
-            if($domain->getNs3()) {
-            $from[] = '/{{ ns3 }}/';
-            $to[] = htmlspecialchars($domain->getNs3());
-            } else {
-            $from[] = '/{{ ns3 }}/';
-            $to[] = '';
-            }
-            if($domain->getNs4()) {
-            $from[] = '/{{ ns4 }}/';
-            $to[] = htmlspecialchars($domain->getNs4());
-            } else {
-            $from[] = '/{{ ns4 }}/';
-            $to[] = '';
-            }
-            if ($this->config['min_data_set'] === false) {
-                $from[] = '/{{ cID_1 }}/';
-                $to[] = htmlspecialchars($contacts);
-                $from[] = '/{{ cID_2 }}/';
-                $to[] = htmlspecialchars($contacts);
-                $from[] = '/{{ cID_3 }}/';
-                $to[] = htmlspecialchars($contacts);
-                $from[] = '/{{ cID_4 }}/';
-                $to[] = htmlspecialchars($contacts);
-            }
-            $from[] = '/{{ authInfo }}/';
-            $to[] = htmlspecialchars($this->generateObjectPW());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-create-' . $clTRID);
-            $from[] = "/<\w+:\w+>\s*<\/\w+:\w+>\s+/ims";
-            $to[] = '';
             
-            $contact_section = '';
-            if ($this->config['min_data_set'] === false) {
-                $contact_section = '
-                    <domain:registrant>{{ cID_1 }}</domain:registrant>
-                    <domain:contact type="admin">{{ cID_2 }}</domain:contact>
-                    <domain:contact type="tech">{{ cID_3 }}</domain:contact>
-                    <domain:contact type="billing">{{ cID_4 }}</domain:contact>';
+            $authInfoPw = $this->epp_random_auth_pw();
+
+            $payload = [
+                'domainname' => $domain->getName(),
+                'period'     => $period,
+                'nss'        => $nss,
+                'authInfoPw' => $authInfoPw,
+            ];
+
+            if (empty($this->config['gtld']) && empty($this->config['min_data_set'])) {
+                if ($profile === 'EU') {
+                    $payload['registrant'] = $contacts[1] ?? null;
+
+                    $payload['contacts'] = [
+                        'tech'    => $contacts[2] ?? null,
+                        'billing' => trim($this->config['eurid_billing_contact'] ?? '') ?: null,
+                    ];
+                } else {
+                    $payload['registrant'] = $contacts[1] ?? null;
+
+                    $payload['contacts'] = [
+                        'admin'   => $contacts[2] ?? null,
+                        'tech'    => $contacts[3] ?? null,
+                        'billing' => $contacts[4] ?? null,
+                    ];
+                }
             }
 
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-              xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-              <command>
-                <create>
-                  <domain:create
-                   xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
-                    <domain:name>{{ name }}</domain:name>
-                    <domain:period unit="y">{{ period }}</domain:period>
-                    <domain:ns>
-                      <domain:hostObj>{{ ns1 }}</domain:hostObj>
-                      <domain:hostObj>{{ ns2 }}</domain:hostObj>
-                      <domain:hostObj>{{ ns3 }}</domain:hostObj>
-                      <domain:hostObj>{{ ns4 }}</domain:hostObj>
-                    </domain:ns>' . $contact_section . '
-                    <domain:authInfo>
-                      <domain:pw>{{ authInfo }}</domain:pw>
-                    </domain:authInfo>
-                  </domain:create>
-                </create>
-                <clTRID>{{ clTRID }}</clTRID>
-              </command>
-            </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-        }
+            $domainCreate = $epp->domainCreate($payload);
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            if (!empty($domainCreate['error'])) {
+                throw new Registrar_Exception((string)$domainCreate['error']);
+            }
+
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain registration failed. Please try again later.'
             );
-            throw new Registrar_Exception('Error: ' . $e->getMessage());
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function renewDomain(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Renewing domain: ' . $domain->getName());
-        $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $expDate = (string)$r->exDate;
-            $expDate = preg_replace("/^(\d+\-\d+\-\d+)\D.*$/", "$1", $expDate);
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ expDate }}/';
-            $to[] = htmlspecialchars($expDate);
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-renew-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <renew>
-          <domain:renew
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
-            <domain:name>{{ name }}</domain:name>
-            <domain:curExpDate>{{ expDate }}</domain:curExpDate>
-            <domain:period unit="y">1</domain:period>
-          </domain:renew>
-        </renew>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-        }
+            $epp = $this->epp_client();
+        
+            $domainRenew = $epp->domainRenew([
+                'domainname' => $domain->getName(),
+                'regperiod'  => 1,
+            ]);
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            if (isset($domainRenew['error'])) {
+                throw new Registrar_Exception($domainRenew['error']);
+            }
+            
+            if ((int)($domainRenew['code'] ?? 0) === 1000) {
+                $exDate = strtotime($domainRenew['exDate']);
+                $domain->setExpirationTime($exDate);
+
+                return true;
+            } else {
+                return false;
+            }
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain renewal failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function modifyContact(Registrar_Domain $domain)
@@ -802,347 +713,298 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
 
         $client = $domain->getContactRegistrar();
-        $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $registrant = (string)$r->registrant;
-            $from = $to = array();
-            $from[] = '/{{ id }}/';
-            $to[] = $registrant;
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($client->getFirstName() . ' ' . $client->getLastName());
-            $from[] = '/{{ org }}/';
-            $to[] = htmlspecialchars($client->getCompany());
-            $from[] = '/{{ street1 }}/';
-            $to[] = htmlspecialchars($client->getAddress1());
-            $from[] = '/{{ street2 }}/';
-            $to[] = htmlspecialchars($client->getAddress2());
-            $from[] = '/{{ city }}/';
-            $to[] = htmlspecialchars($client->getCity());
-            $from[] = '/{{ state }}/';
-            $to[] = htmlspecialchars($client->getState());
-            $from[] = '/{{ postcode }}/';
-            $to[] = htmlspecialchars($client->getZip());
-            $from[] = '/{{ country }}/';
-            $to[] = htmlspecialchars($client->getCountry());
-            $from[] = '/{{ phonenumber }}/';
-            $to[] = htmlspecialchars('+'.$client->getTelCc().'.'.$client->getTel());
-            $from[] = '/{{ email }}/';
-            $to[] = htmlspecialchars($client->getEmail());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-contact-update-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-  <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
-    <command>
-      <update>
-        <contact:update
-         xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
-          <contact:id>{{ id }}</contact:id>
-          <contact:chg>
-            <contact:postalInfo type="int">
-              <contact:name>{{ name }}</contact:name>
-              <contact:org>{{ org }}</contact:org>
-              <contact:addr>
-                <contact:street>{{ street1 }}</contact:street>
-                <contact:street>{{ street2 }}</contact:street>
-                <contact:street></contact:street>
-                <contact:city>{{ city }}</contact:city>
-                <contact:sp>{{ state }}</contact:sp>
-                <contact:pc>{{ postcode }}</contact:pc>
-                <contact:cc>{{ country }}</contact:cc>
-              </contact:addr>
-            </contact:postalInfo>
-            <contact:voice>{{ phonenumber }}</contact:voice>
-            <contact:fax></contact:fax>
-            <contact:email>{{ email }}</contact:email>
-          </contact:chg>
-        </contact:update>
-      </update>
-      <clTRID>{{ clTRID }}</clTRID>
-    </command>
-</epp>');
-            $r = $this->write($xml, __FUNCTION__);
-        }
+            $epp = $this->epp_client($params);
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+
+            if (isset($info['error'])) {
+                throw new Registrar_Exception($info['error']);
+            }
+
+            $dcontact = [];
+
+            if (!empty($info['registrant'])) {
+                $dcontact['registrant'] = (string)$info['registrant'];
+            }
+
+            $contacts = $info['contact'] ?? [];
+            if (!is_array($contacts)) {
+                $contacts = [];
+            }
+
+            foreach ($contacts as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+
+                $type = (string)($row['type'] ?? '');
+                $cid  = (string)($row['id'] ?? '');
+
+                if ($type === '' || $cid === '') {
+                    continue;
+                }
+
+                if (in_array($type, ['admin','tech','billing'], true)) {
+                    $dcontact[$type] = $cid;
+                }
+            }
+
+            foreach($dcontact as $type => $id) {
+                $a = array();
+                if ($type == 'registrant') {
+                    $a = $domain->getContactRegistrar();
+                }
+                elseif ($type == 'admin') {
+                    $a = $domain->getContactAdmin();
+                }
+                elseif ($type == 'tech') {
+                    $a = $domain->getContactTech();
+                }
+                elseif ($type == 'billing') {
+                    $a = $domain->getContactBilling();
+                }
+
+                if (empty($a)) {
+                    continue;
+                }
+
+                $contactUpdate = $epp->contactUpdate([
+                    'id'               => $id,
+                    'type'             => 'int',
+                    'firstname'        => $client->getFirstName(),
+                    'lastname'         => $client->getLastName(),
+                    'companyname'      => htmlspecialchars($client->getCompany()),
+                    'address1'         => htmlspecialchars($client->getAddress1()),
+                    'address2'         => htmlspecialchars($client->getAddress2()),
+                    'city'             => htmlspecialchars($client->getCity()),
+                    'state'            => htmlspecialchars($client->getState()),
+                    'postcode'         => htmlspecialchars($client->getZip()),
+                    'country'          => htmlspecialchars($client->getCountry()),
+                    'fullphonenumber'  => htmlspecialchars('+'.$client->getTelCc().'.'.$client->getTel()),
+                    'email'            => htmlspecialchars($client->getEmail()),
+                ]);
+
+                if (isset($contactUpdate['error'])) {
+                    echo 'ContactUpdate Error: ' . $contactUpdate['error'] . PHP_EOL;
+                    return;
+                }
+            }
+            
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Contact update failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
     
     public function enablePrivacyProtection(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Enabling Privacy protection: ' . $domain->getName());
-        $return = array();
-        $processedContacts = [];
+        if ($this->config['min_data_set'] === true) {
+            throw new Registrar_Exception("Not applicable.");
+        }
 
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $dcontact = array();
-            $dcontact['registrant'] = (string)$r->registrant;
-            foreach($r->contact as $e) {
-                $type = (string)$e->attributes()->type;
-                $dcontact[$type] = (string)$e;
+            $epp = $this->epp_client();
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+
+            if (isset($info['error'])) {
+                throw new Registrar_Exception($info['error']);
             }
 
-            $contact = array();
-            foreach($dcontact as $id) {
-                // If the contact ID has already been processed, skip the update
-                if (in_array($id, $processedContacts)) {
+            $dcontact = [];
+            if (!empty($info['registrant'])) {
+                $dcontact['registrant'] = (string)$info['registrant'];
+            }
+
+            $rows = $info['contact'] ?? [];
+            if (is_array($rows)) {
+                foreach ($rows as $row) {
+                    if (!is_array($row)) continue;
+
+                    $type = (string)($row['type'] ?? '');
+                    $id   = (string)($row['id'] ?? '');
+
+                    if ($type === '' || $id === '') continue;
+
+                    $dcontact[$type] = $id;
+                }
+            }
+
+            $contact = [];
+            foreach ($dcontact as $id) {
+                if (isset($contact[$id])) {
                     continue;
                 }
-                $from = $to = array();
-                $from[] = '/{{ id }}/';
-                $to[] = htmlspecialchars($id);
-                $from[] = '/{{ flag }}/';
-                $to[] = 0;
-                $from[] = '/{{ clTRID }}/';
-                $clTRID = str_replace('.', '', round(microtime(1) , 3));
-                $to[] = htmlspecialchars($this->config['registrarprefix'] . '-contact-update-' . $clTRID);
-                $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <update>
-          <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:contact-1.0 contact-1.0.xsd">
-            <contact:id>{{ id }}</contact:id>
-            <contact:chg>
-              <contact:disclose flag="{{ flag }}">
-                <contact:name type="int"/>
-                <contact:addr type="int"/>
-                <contact:org type="int"/>
-                <contact:voice/>
-                <contact:fax/>
-                <contact:email/>
-              </contact:disclose>
-            </contact:chg>
-          </contact:update>
-        </update>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-                $r = $this->write($xml, __FUNCTION__);
                 
-                // Mark this contact ID as processed to avoid duplicate updates
-                $processedContacts[] = $id;
+                $clTRID = str_replace('.', '', round(microtime(1), 3));
+
+                $xml = array(
+                    'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+              <command>
+                <update>
+                  <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
+                    <contact:id>'.$id.'</contact:id>
+                    <contact:chg>
+                      <contact:disclose flag="0">
+                        <contact:name type="int"/>
+                        <contact:addr type="int"/>
+                        <contact:voice/>
+                        <contact:fax/>
+                        <contact:email/>
+                      </contact:disclose>
+                    </contact:chg>
+                  </contact:update>
+                </update>
+                <clTRID>'.$clTRID.'</clTRID>
+              </command>
+            </epp>
+            ');
+                $rawXml = $epp->rawXml($xml);
+                
+                if (isset($rawXml['error'])) {
+                    throw new Registrar_Exception($rawXml['error']);
+                }
             }
-        }
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Privacy protection enable failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
-    
+
     public function disablePrivacyProtection(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Disabling Privacy protection: ' . $domain->getName());
-        $return = array();
-        $processedContacts = [];
+        if ($this->config['min_data_set'] === true) {
+            throw new Registrar_Exception("Not applicable.");
+        }
 
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $dcontact = array();
-            $dcontact['registrant'] = (string)$r->registrant;
-            foreach($r->contact as $e) {
-                $type = (string)$e->attributes()->type;
-                $dcontact[$type] = (string)$e;
+            $epp = $this->epp_client();
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+
+            if (isset($info['error'])) {
+                throw new Registrar_Exception($info['error']);
             }
 
-            $contact = array();
-            foreach($dcontact as $id) {
-                // If the contact ID has already been processed, skip the update
-                if (in_array($id, $processedContacts)) {
+            $dcontact = [];
+            if (!empty($info['registrant'])) {
+                $dcontact['registrant'] = (string)$info['registrant'];
+            }
+
+            $rows = $info['contact'] ?? [];
+            if (is_array($rows)) {
+                foreach ($rows as $row) {
+                    if (!is_array($row)) continue;
+
+                    $type = (string)($row['type'] ?? '');
+                    $id   = (string)($row['id'] ?? '');
+
+                    if ($type === '' || $id === '') continue;
+
+                    $dcontact[$type] = $id;
+                }
+            }
+
+            $contact = [];
+            foreach ($dcontact as $id) {
+                if (isset($contact[$id])) {
                     continue;
                 }
-                $from = $to = array();
-                $from[] = '/{{ id }}/';
-                $to[] = htmlspecialchars($id);
-                $from[] = '/{{ flag }}/';
-                $to[] = 1;
-                $from[] = '/{{ clTRID }}/';
-                $clTRID = str_replace('.', '', round(microtime(1) , 3));
-                $to[] = htmlspecialchars($this->config['registrarprefix'] . '-contact-update-' . $clTRID);
-                $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <update>
-          <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:contact-1.0 contact-1.0.xsd">
-            <contact:id>{{ id }}</contact:id>
-            <contact:chg>
-              <contact:disclose flag="{{ flag }}">
-                <contact:name type="int"/>
-                <contact:addr type="int"/>
-                <contact:org type="int"/>
-                <contact:voice/>
-                <contact:fax/>
-                <contact:email/>
-              </contact:disclose>
-            </contact:chg>
-          </contact:update>
-        </update>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-                $r = $this->write($xml, __FUNCTION__);
                 
-                // Mark this contact ID as processed to avoid duplicate updates
-                $processedContacts[] = $id;
+                $clTRID = str_replace('.', '', round(microtime(1), 3));
+
+                $xml = array(
+                    'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+              <command>
+                <update>
+                  <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
+                    <contact:id>'.$id.'</contact:id>
+                    <contact:chg>
+                      <contact:disclose flag="1">
+                        <contact:name type="int"/>
+                        <contact:addr type="int"/>
+                        <contact:voice/>
+                        <contact:fax/>
+                        <contact:email/>
+                      </contact:disclose>
+                    </contact:chg>
+                  </contact:update>
+                </update>
+                <clTRID>'.$clTRID.'</clTRID>
+              </command>
+            </epp>
+            ');
+                $rawXml = $epp->rawXml($xml);
+                
+                if (isset($rawXml['error'])) {
+                    throw new Registrar_Exception($rawXml['error']);
+                }
             }
-        }
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Privacy protection disable failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function getEpp(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Retrieving domain transfer code: ' . $domain->getName());
-        $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-              xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-              <command>
-                <info>
-                  <domain:info
-                   xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-                   xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-                    <domain:name hosts="all">{{ name }}</domain:name>
-                  </domain:info>
-                </info>
-                <clTRID>{{ clTRID }}</clTRID>
-              </command>
-            </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $eppcode = (string)$r->authInfo->pw;
+            $epp = $this->epp_client();
+        
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
 
-            if (!empty($s)) {
-                    $this->logout();
-                }
+            if (!empty($info['error'])) {
+                throw new Registrar_Exception((string)$info['error']);
+            }
+        
+            $eppcode = (string)$info['authInfo'];
+
             return $eppcode;
-        }
-
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain information failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function lock(Registrar_Domain $domain)
@@ -1150,95 +1012,65 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Locking domain: ' . $domain->getName());
         $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $status = array();
-            foreach($r->status as $e) {
-                $st = (string)$e->attributes()->s;
-                if (!preg_match("/^client.+Prohibited$/i", $st)) {
+            $epp = $this->epp_client();
+
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+                
+            if (isset($info['error'])) {
+                throw new Registrar_Exception($info['error']);
+            }
+            
+            $statuses = $info['status'] ?? [];
+            if (!is_array($statuses)) {
+                $statuses = [$statuses];
+            }
+
+            $status = [];
+            foreach ($statuses as $st) {
+                $st = (string)$st;
+                if ($st === '') {
+                    continue;
+                }
+
+                if (!preg_match('/^client.+Prohibited$/i', $st)) {
                     continue;
                 }
 
                 $status[$st] = true;
             }
 
-            $add = array();
-            foreach(array(
-                'clientDeleteProhibited',
-                'clientTransferProhibited'
-            ) as $st) {
+            $add = [];
+
+            foreach (['clientDeleteProhibited', 'clientTransferProhibited'] as $st) {
                 if (!isset($status[$st])) {
                     $add[] = $st;
                 }
             }
 
-            if (!empty($add)) {
-                $text = '';
-                foreach($add as $st) {
-                    $text.= '<domain:status s="' . $st . '" lang="en"></domain:status>' . "\n";
+            foreach ($add as $st) {
+                $resp = $epp->domainUpdateStatus([
+                    'domainname' => $domain->getName(),
+                    'command'    => 'add',
+                    'status'     => $st,
+                ]);
+
+                if (!empty($resp['error'])) {
+                    throw new Registrar_Exception((string)$resp['error']);
                 }
-                $from = $to = array();
-                $from[] = '/{{ add }}/';
-                $to[] = (empty($text) ? '' : "<domain:add>\n{$text}</domain:add>\n");
-                $from[] = '/{{ name }}/';
-                $to[] = htmlspecialchars($domain->getName());
-                $from[] = '/{{ clTRID }}/';
-                $clTRID = str_replace('.', '', round(microtime(1), 3));
-                $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-update-' . $clTRID);
-                $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <update>
-          <domain:update
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name>{{ name }}</domain:name>
-            {{ add }}
-          </domain:update>
-        </update>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-                $r = $this->write($xml, __FUNCTION__);
             }
-        }
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+            return $return;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain lock failed. Please try again later.'
             );
+        } finally {
+            $this->epp_client_logout($epp);
         }
-
-        if (!empty($s)) {
-            $this->logout();
-        }
-
-        return $return;
     }
 
     public function unlock(Registrar_Domain $domain)
@@ -1246,251 +1078,183 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Unlocking: ' . $domain->getName());
         $return = array();
         try {
-            $s    = $this->connect();
-            $this->login();
-            $from = $to = array();
-            $from[] = '/{{ name }}/';
-            $to[] = htmlspecialchars($domain->getName());
-            $from[] = '/{{ clTRID }}/';
-            $clTRID = str_replace('.', '', round(microtime(1), 3));
-            $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-info-' . $clTRID);
-            $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <info>
-          <domain:info
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name hosts="all">{{ name }}</domain:name>
-          </domain:info>
-        </info>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-            $r = $this->write($xml, __FUNCTION__);
-            $r = $r->response->resData->children('urn:ietf:params:xml:ns:domain-1.0')->infData;
-            $status = array();
-            foreach($r->status as $e) {
-                $st = (string)$e->attributes()->s;
-                if (!preg_match("/^client.+Prohibited$/i", $st)) {
+            $epp = $this->epp_client();
+
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+                
+            if (isset($info['error'])) {
+                throw new Registrar_Exception($info['error']);
+            }
+            
+            $statuses = $info['status'] ?? [];
+            if (!is_array($statuses)) {
+                $statuses = [$statuses];
+            }
+
+            $status = [];
+            foreach ($statuses as $st) {
+                $st = (string)$st;
+                if ($st === '') {
+                    continue;
+                }
+
+                if (!preg_match('/^client.+Prohibited$/i', $st)) {
                     continue;
                 }
 
                 $status[$st] = true;
             }
 
-            $rem = array();
-            foreach(array(
-                'clientDeleteProhibited',
-                'clientTransferProhibited'
-            ) as $st) {
+            $rem = [];
+
+            foreach (['clientDeleteProhibited', 'clientTransferProhibited'] as $st) {
                 if (isset($status[$st])) {
                     $rem[] = $st;
                 }
             }
 
-            if (!empty($rem)) {
-                $text = '';
-                foreach($rem as $st) {
-                    $text.= '<domain:status s="' . $st . '" lang="en"></domain:status>' . "\n";
+            foreach ($rem as $st) {
+                $resp = $epp->domainUpdateStatus([
+                    'domainname' => $domain->getName(),
+                    'command'    => 'rem',
+                    'status'     => $st,
+                ]);
+
+                if (!empty($resp['error'])) {
+                    throw new Registrar_Exception((string)$resp['error']);
                 }
-                $from = $to = array();
-                $from[] = '/{{ rem }}/';
-                $to[] = (empty($text) ? '' : "<domain:rem>\n{$text}</domain:rem>\n");
-                $from[] = '/{{ name }}/';
-                $to[] = htmlspecialchars($domain->getName());
-                $from[] = '/{{ clTRID }}/';
-                $clTRID = str_replace('.', '', round(microtime(1), 3));
-                $to[] = htmlspecialchars($this->config['registrarprefix'] . '-domain-update-' . $clTRID);
-                $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-      <command>
-        <update>
-          <domain:update
-           xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-           xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-            <domain:name>{{ name }}</domain:name>
-            {{ rem }}
-          </domain:update>
-        </update>
-        <clTRID>{{ clTRID }}</clTRID>
-      </command>
-    </epp>');
-                $r = $this->write($xml, __FUNCTION__);
             }
+
+            return $return;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain unlock failed. Please try again later.'
+            );
+        } finally {
+            $this->epp_client_logout($epp);
+        }
+    }
+
+    public function epp_client()
+    {
+        $profile = $this->config['registry_profile'] ?? 'generic';
+
+        $epp = EppRegistryFactory::create($profile);
+        $epp->disableLogging();
+
+        $tls_version = '1.2';
+        if (!empty($this->config['tls_version'])) {
+            $tls_version = '1.3';
+        }
+        
+        $verify_peer = false;
+        if ($this->config['verify_peer'] == 'on') {
+            $verify_peer = true;
         }
 
-        catch(exception $e) {
-            $return = array(
-                'error' => $e->getMessage()
+        $moduleDir = __DIR__;
+
+        $certPath = trim($this->config['local_cert'] ?? '');
+        $keyPath  = trim($this->config['local_pk'] ?? '');
+
+        if ($certPath === '' || $keyPath === '') {
+            throw new Registrar_Exception('Client certificate and private key are required.');
+        }
+
+        if ($certPath[0] !== '/' && !preg_match('~^[A-Za-z]:[\\\\/]~', $certPath)) {
+            $certPath = $moduleDir . '/' . $certPath;
+        }
+        if ($keyPath[0] !== '/' && !preg_match('~^[A-Za-z]:[\\\\/]~', $keyPath)) {
+            $keyPath = $moduleDir . '/' . $keyPath;
+        }
+
+        $certPath = realpath($certPath);
+        $keyPath  = realpath($keyPath);
+
+        if ($certPath === false || $keyPath === false) {
+            throw new Registrar_Exception(
+                'EPP TLS certificate or key not found or not readable. '
+                . 'cert=' . ($certPath ?: 'false') . ' key=' . ($keyPath ?: 'false')
             );
         }
 
-        if (!empty($s)) {
-            $this->logout();
+        $info = [
+            'host'    => $this->config['host'] ?? '',
+            'port'    => (int)($this->config['port'] ?? 700),
+            'timeout' => 30,
+            'tls'     => $tls_version ?? '1.2',
+            'bind'    => false,
+            'bindip'  => '1.2.3.4:0',
+            'verify_peer'      => !empty($verify_peer),
+            'verify_peer_name' => false,
+            'cafile'           => $this->config['cafile'] ?? '',
+            'local_cert' => $certPath,
+            'local_pk' => $keyPath,
+            'passphrase'       => $this->config['passphrase'] ?? '',
+            'allow_self_signed'=> true,
+        ];
+        if ($profile === 'generic') {
+            $raw = $this->config['login_extensions'] ?? '';
+
+            if (is_array($raw)) {
+                $info['loginExtensions'] = array_values(array_filter(array_map('trim', $raw)));
+            } else {
+                $info['loginExtensions'] = trim($raw) !== ''
+                    ? array_values(array_filter(array_map('trim', preg_split('/[,\s]+/', $raw))))
+                    : [
+                        'urn:ietf:params:xml:ns:secDNS-1.1',
+                        'urn:ietf:params:xml:ns:rgp-1.0',
+                    ];
+            }
+
+            $epp->setLoginExtensions($info['loginExtensions']);
         }
 
-        return $return;
+        if (empty($info['host']) || empty($info['port'])) {
+            throw new Registrar_Exception('EPP host/port not configured');
+        }
+
+        $epp->connect($info);
+
+        $login = $epp->login([
+            'clID'   => $this->config['clid'] ?? '',
+            'pw'     => $this->config['pw'] ?? '',
+            'prefix' => $this->config['registrarprefix'] ?? 'epp',
+        ]);
+
+        if (isset($login['error'])) {
+            throw new Registrar_Exception('Login Error: ' . $login['error']);
+        }
+
+        return $epp;
     }
 
-    public function connect()
+    public function epp_client_logout($epp)
     {
-        $host = $this->config['host'];
-        $port = $this->config['port'];
-        $timeout = 30;
-        
-        $opts = array(
-            'ssl' => array(
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-                'verify_host' => false,
-                'allow_self_signed' => true,
-                'local_cert' => $this->config['ssl_cert'],
-                'local_pk' => $this->config['ssl_key']
-            )
-        );
-        $context = stream_context_create($opts);
-        if ($this->config['use_tls_12'] === true) {
-            $tls = 'tlsv1.2';
-        } else {
-            $tls = 'tlsv1.3';
+        try { $epp->logout(); } catch (\Throwable $e) {}
+    }
+    
+    public function epp_random_contact_id(int $len = 10): string {
+        $alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        $out = '';
+        for ($i = 0; $i < $len; $i++) {
+            $out .= $alphabet[random_int(0, strlen($alphabet) - 1)];
         }
-        $this->socket = stream_socket_client($tls."://{$host}:{$port}", $errno, $errmsg, $timeout, STREAM_CLIENT_CONNECT, $context);
-
-        if (!$this->socket) {
-            throw new Registrar_Exception("Cannot connect to server '{$host}': {$errmsg}");
-        }
-
-        return $this->read();
+        return strtoupper($out);
     }
 
-    public function login()
-    {
-        $from = $to = array();
-        $from[] = '/{{ clID }}/';
-        $to[] = htmlspecialchars($this->config['username']);
-        $from[] = '/{{ pw }}/';
-        $to[] = $this->config['password'];
-        $from[] = '/{{ clTRID }}/';
-        $clTRID = str_replace('.', '', round(microtime(1), 3));
-        $to[] = htmlspecialchars($this->config['registrarprefix'] . '-login-' . $clTRID);
-        $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-  <command>
-    <login>
-      <clID>{{ clID }}</clID>
-      <pw><![CDATA[{{ pw }}]]></pw>
-      <options>
-        <version>1.0</version>
-        <lang>en</lang>
-      </options>
-      <svcs>
-        <objURI>urn:ietf:params:xml:ns:domain-1.0</objURI>
-        <objURI>urn:ietf:params:xml:ns:contact-1.0</objURI>
-        <objURI>urn:ietf:params:xml:ns:host-1.0</objURI>
-        <svcExtension>
-          <extURI>urn:ietf:params:xml:ns:secDNS-1.1</extURI>
-          <extURI>urn:ietf:params:xml:ns:rgp-1.0</extURI>
-        </svcExtension>
-      </svcs>
-    </login>
-    <clTRID>{{ clTRID }}</clTRID>
-  </command>
-</epp>');
-        $r = $this->write($xml, __FUNCTION__);
-        $this->isLogined = true;
-        return true;
-    }
-
-    public function logout()
-    {
-        if (!$this->isLogined) {
-            return true;
-        }
-
-        $from = $to = array();
-        $from[] = '/{{ clTRID }}/';
-        $clTRID = str_replace('.', '', round(microtime(1), 3));
-        $to[] = htmlspecialchars($this->config['registrarprefix'] . '-logout-' . $clTRID);
-        $xml = preg_replace($from, $to, '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-  <command>
-    <logout/>
-    <clTRID>{{ clTRID }}</clTRID>
-  </command>
-</epp>');
-        $r = $this->write($xml, __FUNCTION__);
-        $this->isLogined = false;
-        return true;
-    }
-
-    public function read()
-    {
-        $hdr = stream_get_contents($this->socket, 4);
-        if ($hdr === false) {
-            throw new Registrar_Exception('Connection appears to have closed.');
-        }
-        if (strlen($hdr) < 4) {
-            throw new Registrar_Exception('Failed to read header from the connection.');
-        }
-        $unpacked = unpack('N', $hdr);
-        $xml = fread($this->socket, ($unpacked[1] - 4));
-        $xml = preg_replace('/></', ">\n<", $xml);      
-        return $xml;
-    }
-
-    public function write($xml)
-    {
-        if (fwrite($this->socket, pack('N', (strlen($xml) + 4)) . $xml) === false) {
-            throw new Registrar_Exception('Error writing to the connection.');
-        }
-        $xml_string = $this->read();
-        libxml_use_internal_errors(true);
-        
-        $r = simplexml_load_string($xml_string, 'SimpleXMLElement', LIBXML_DTDLOAD | LIBXML_NOENT);
-        if ($r instanceof SimpleXMLElement) {
-            $r->registerXPathNamespace('e', 'urn:ietf:params:xml:ns:epp-1.0');
-            $r->registerXPathNamespace('xsi', 'http://www.w3.org/2001/XMLSchema-instance');
-            $r->registerXPathNamespace('domain', 'urn:ietf:params:xml:ns:domain-1.0');
-            $r->registerXPathNamespace('contact', 'urn:ietf:params:xml:ns:contact-1.0');
-            $r->registerXPathNamespace('host', 'urn:ietf:params:xml:ns:host-1.0');
-            $r->registerXPathNamespace('rgp', 'urn:ietf:params:xml:ns:rgp-1.0');
-        }
-
-        if (isset($r->response) && $r->response->result->attributes()->code >= 2000) {
-            throw new Registrar_Exception($r->response->result->msg);
-        }
-        return $r;
-    }
-
-
-    public function disconnect()
-    {
-        $result = fclose($this->socket);
-        if (!$result) {
-             throw new Registrar_Exception('Error closing the connection.');
-        }
-        $this->socket = null;
-        return $result;
-    }
-
-    function generateObjectPW($objType = 'none')
-    {
+    public function epp_random_auth_pw(int $len = 16): string {
         $result = '';
         $uppercaseChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         $lowercaseChars = "abcdefghijklmnopqrstuvwxyz";
         $numbers = "1234567890";
         $specialSymbols = "!=+-";
-        $minLength = 13;
-        $maxLength = 13;
+        $minLength = 16;
+        $maxLength = 16;
         $length = mt_rand($minLength, $maxLength);
 
         // Include at least one character from each set
@@ -1505,16 +1269,6 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $result .= $chars[mt_rand(0, strlen($chars) - 1)];
         }
 
-        return 'aA1' . $result;
-    }
-    
-    public function generateRandomString() 
-    {
-        $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-        $randomString = '';
-        for ($i = 0; $i < 12; $i++) {
-            $randomString .= $characters[rand(0, strlen($characters) - 1)];
-        }
-        return $randomString;
+        return $result;
     }
 }
