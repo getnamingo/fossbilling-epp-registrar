@@ -984,23 +984,37 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Retrieving domain transfer code: ' . $domain->getName());
         try {
             $epp = $this->epp_client();
-        
-            $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
-            ]);
+            $eppcode = null;
+            
+            if (!empty($this->config['set_authinfo_on_info'])) {
+                $eppcode = $this->epp_random_auth_pw();
 
-            if (!empty($info['error'])) {
-                throw new Registrar_Exception((string)$info['error']);
+                $info = $epp->domainUpdateAuthinfo([
+                    'domainname' => $domain->getName(),
+                    'authInfo'   => $eppcode,
+                ]);
+                
+                if (isset($info['error'])) {
+                    throw new Registrar_Exception($info['error']);
+                }
+            } else {
+                $info = $epp->domainInfo([
+                    'domainname' => $domain->getName(),
+                ]);
+
+                if (!empty($info['error'])) {
+                    throw new Registrar_Exception((string)$info['error']);
+                }
+            
+                $eppcode = (string)$info['authInfo'];
             }
-        
-            $eppcode = (string)$info['authInfo'];
 
             return $eppcode;
         } catch (Registrar_Exception $e) {
             throw $e;
         } catch (\Throwable $e) {
             throw new Registrar_Exception(
-                'Domain information failed. Please try again later.'
+                'Domain authcode generation failed. Please try again later.'
             );
         } finally {
             $this->epp_client_logout($epp);

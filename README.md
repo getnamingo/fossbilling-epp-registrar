@@ -95,17 +95,32 @@ composer require pinga/tembo
 
 ## Troubleshooting
 
-If you experience problems connecting to your EPP server, follow these steps:
+If you experience problems connecting to your EPP server or syncing domains, work through the checklist below.
 
-1. Ensure your server's IP (IPv4 and IPv6) is whitelisted by the EPP server.
+1. **Network access / allowlisting**
+   - Ensure the server’s outbound IP(s) are allowlisted by the registry EPP endpoint (both **IPv4** and **IPv6**, if applicable).
 
-2. Confirm your client and server support IPv6 if required. If needed, disable IPv6 support in EPP server.
+2. **IPv6 considerations**
+   - Confirm both sides support IPv6 if you intend to use it.
+   - If you encounter IPv6-related connection issues, temporarily **disable IPv6** on the client side and retry.
 
-3. Reload the EPP module or restart the web server after any changes.
+3. **Reload after changes**
+   - After updating configuration or replacing module files, restart the PHP runtime to ensure changes take effect.
 
-4. Ensure certificates have the correct permissions: `chown www-data:www-data cert.pem` and `chown www-data:www-data key.pem`.
+4. **TLS certificates and permissions**
+   - Verify the certificate and key paths are correct and readable by the web server user.
+   - Example (Debian/Ubuntu):
+     ```bash
+     chown www-data:www-data cert.pem key.pem
+     chmod 600 cert.pem key.pem
+     ```
 
-5. Verify the EPP module is configured with the chosen registrar prefix.
+5. **Registrar prefix**
+   - Ensure the module is configured with the correct **registrar prefix** for your registry connection.
+
+6. **Transfer AuthInfo not returned by registry**
+   - Some registries (e.g. **CentralNic**, **CoCCA**) may not return the transfer AuthInfo code via standard `domain:info`.
+   - If your module does not display the transfer code, enable the option **“Set AuthInfo on Request”** in the module configuration. This forces the module to set/generate AuthInfo when requested, so it can be displayed/managed consistently.
 
 ## Support
 
