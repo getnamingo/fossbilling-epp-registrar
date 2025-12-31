@@ -149,6 +149,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'generic' => 'generic',
                         'EU'      => 'EU',
                         'FR'      => 'FR',
+                        'HR'      => 'HR',
                         'MX'      => 'MX',
                         'PL'      => 'PL',
                         'SE'      => 'SE',
@@ -603,6 +604,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'orgno'  => ($profile === 'SE') ? ($client->getCompanyNumber() ?? null) : null,
                         'vatno' => ($profile === 'SE' && $client->getCompanyNumber())
                             ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
+                            : null,
+                        // HR-only extras
+                        'nin' => ($profile === 'HR')
+                            ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
+                            : null,
+                        'nin_type' => ($profile === 'HR')
+                            ? ($client->getCompanyNumber() ? 'company' : 'personal')
                             : null,
                     ]);
 
