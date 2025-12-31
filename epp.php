@@ -151,7 +151,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'FR'      => 'FR',
                         'MX'      => 'MX',
                         'PL'      => 'PL',
-                        'SWITCH'      => 'SWITCH',
+                        'SE'      => 'SE',
+                        'SWITCH'  => 'SWITCH',
                         'UA'      => 'UA',
                         'VRSN'    => 'VRSN',
                     ],
@@ -598,6 +599,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'authInfoPw'      => $authInfoPw,
                         // EU-only extras
                         'euType'    => ($profile === 'EU') ? $contactType : null,
+                        // SE-only extras
+                        'orgno'  => ($profile === 'SE') ? ($client->getCompanyNumber() ?? null) : null,
+                        'vatno' => ($profile === 'SE' && $client->getCompanyNumber())
+                            ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
+                            : null,
                     ]);
 
                     if (!empty($contactCreate['error'])) {
