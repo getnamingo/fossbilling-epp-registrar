@@ -151,6 +151,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'FR'      => 'FR',
                         'MX'      => 'MX',
                         'PL'      => 'PL',
+                        'SWITCH'      => 'SWITCH',
                         'UA'      => 'UA',
                         'VRSN'    => 'VRSN',
                     ],
@@ -565,6 +566,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 
                 $contactTypeMap = [
                     'EU'      => ['registrant', 'tech'],                 // EURid
+                    'SWITCH'=> ['registrant', 'tech'],
                     'generic'=> ['registrant', 'admin', 'tech', 'billing'],
                     'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
                 ];
