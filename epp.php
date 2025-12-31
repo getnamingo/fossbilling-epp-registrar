@@ -149,6 +149,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'generic' => 'generic',
                         'EU'      => 'EU',
                         'MX'      => 'MX',
+                        'PL'      => 'PL',
                         'UA'      => 'UA',
                         'VRSN'    => 'VRSN',
                     ],
