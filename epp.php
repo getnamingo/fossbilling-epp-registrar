@@ -150,6 +150,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'EU'      => 'EU',
                         'FR'      => 'FR',
                         'HR'      => 'HR',
+                        'LV'      => 'LV',
                         'MX'      => 'MX',
                         'PL'      => 'PL',
                         'PT'      => 'PT',
@@ -290,7 +291,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if ($profile !== 'EU') {
+            if (!in_array($profile, ['EU', 'HR', 'LV'], true)) {
                 if (!empty($add)) {
                     foreach ($add as $k => $nsName) {
                         $nsName = trim((string)$nsName);
@@ -343,7 +344,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
               $final["ns$i"] = $v;
             }
 
-            if ($profile === 'EU') {
+            if (in_array($profile, ['EU', 'HR', 'LV'], true)) {
                 $payload = [
                     'domainname' => $domain->getName(),
                     'nss'        => [],
@@ -606,6 +607,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'vatno' => ($profile === 'SE' && $client->getCompanyNumber())
                             ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
                             : null,
+                        // LV-only extras
+                        'regNr' => ($profile === 'LV')
+                            ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
+                            : null,
+                        'vatNr' => ($profile === 'LV' && $client->getCompanyNumber())
+                            ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
+                            : null,
                         // HR-only extras
                         'nin' => ($profile === 'HR')
                             ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
@@ -629,7 +637,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if ($profile !== 'EU') {
+            if (!in_array($profile, ['EU', 'HR', 'LV'], true)) {
                 foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
                     $hostname = $domain->{'get' . ucfirst($nsKey)}();
                     if (empty($hostname)) {
@@ -727,6 +735,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     public function renewDomain(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Renewing domain: ' . $domain->getName());
+        $profile = $this->config['registry_profile'] ?? 'generic';
+        if ($profile === 'LV') {
+            throw new Registrar_Exception("Not supported.");
+        }
         try {
             $epp = $this->epp_client();
         
