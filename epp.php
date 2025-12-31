@@ -148,6 +148,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'multiOptions' => [
                         'generic' => 'generic',
                         'EU'      => 'EU',
+                        'FR'      => 'FR',
                         'MX'      => 'MX',
                         'PL'      => 'PL',
                         'UA'      => 'UA',
@@ -395,13 +396,44 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Epp code: ' . $domain->getEpp());
         try {
             $epp = $this->epp_client();
+            
+            $profile = $this->config['registry_profile'] ?? 'generic';
+            if ($profile === 'FR') {
+                $domainInfo = $epp->domainInfo([
+                    'domainname' => $domain->getName(),
+                ]);
 
-            $domainTransfer = $epp->domainTransfer([
-                'domainname' => $domain->getName(),
-                'years'      => 1,
-                'authInfoPw' => $domain->getEpp(),
-                'op'         => 'request',
-            ]);
+                if (isset($domainInfo['error'])) {
+                    throw new Registrar_Exception($domainInfo['error']);
+                }
+
+                $adminId = null;
+                $techId  = null;
+
+                foreach (($domainInfo['contact'] ?? []) as $c) {
+                    if (($c['type'] ?? '') === 'admin') {
+                        $adminId = $c['id'] ?? null;
+                    } elseif (($c['type'] ?? '') === 'tech') {
+                        $techId = $c['id'] ?? null;
+                    }
+                }
+
+                $domainTransfer = $epp->domainTransfer([
+                    'domainname' => $domain->getName(),
+                    'years'      => 1,
+                    'authInfoPw' => $domain->getEpp(),
+                    'op'         => 'request',
+                    'admin'      => $adminId,
+                    'tech'       => $techId,
+                ]);
+            } else {
+                $domainTransfer = $epp->domainTransfer([
+                    'domainname' => $domain->getName(),
+                    'years'      => 1,
+                    'authInfoPw' => $domain->getEpp(),
+                    'op'         => 'request',
+                ]);
+            }
 
             if (isset($domainTransfer['error'])) {
                 throw new Registrar_Exception($domainTransfer['error']);
