@@ -291,7 +291,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if (!in_array($profile, ['EU', 'HR', 'LV'], true)) {
+            if (!in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 if (!empty($add)) {
                     foreach ($add as $k => $nsName) {
                         $nsName = trim((string)$nsName);
@@ -344,7 +344,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
               $final["ns$i"] = $v;
             }
 
-            if (in_array($profile, ['EU', 'HR', 'LV'], true)) {
+            if (in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 $payload = [
                     'domainname' => $domain->getName(),
                     'nss'        => [],
@@ -353,7 +353,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 foreach (array_values($final) as $host) {
                     $ns = ['hostName' => $host];
 
-                    if (preg_match('/\.eu$/i', $host)) {
+                    if (preg_match('/\.(eu|hr|ge|lv)$/i', $host)) {
                         $a = @dns_get_record($host, DNS_A);
                         if (!empty($a[0]['ip'])) {
                             $ns['ipv4'] = $a[0]['ip'];
@@ -637,7 +637,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if (!in_array($profile, ['EU', 'HR', 'LV'], true)) {
+            if (!in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
                     $hostname = $domain->{'get' . ucfirst($nsKey)}();
                     if (empty($hostname)) {
@@ -677,15 +677,40 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $period     = (int)($domain->getRegistrationPeriod() ?? 1);
-
+            
             $nss = [];
-            foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
-                $hostname = $domain->{'get' . ucfirst($nsKey)}();
-                if (!empty($hostname)) {
-                    $nss[] = $hostname;
+            if (in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
+                foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
+                    $host = $domain->{'get' . ucfirst($nsKey)}();
+                    if (empty($host)) {
+                        continue;
+                    }
+
+                    $ns = ['hostName' => $host];
+
+                    if (preg_match('/\.(eu|hr|ge|lv)$/i', $host)) {
+                        $a = @dns_get_record($host, DNS_A);
+                        if (!empty($a[0]['ip'])) {
+                            $ns['ipv4'] = $a[0]['ip'];
+                        }
+
+                        $aaaa = @dns_get_record($host, DNS_AAAA);
+                        if (!empty($aaaa[0]['ipv6'])) {
+                            $ns['ipv6'] = $aaaa[0]['ipv6'];
+                        }
+                    }
+
+                    $nss[] = $ns;
+                }
+            } else {
+                foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
+                    $hostname = $domain->{'get' . ucfirst($nsKey)}();
+                    if (!empty($hostname)) {
+                        $nss[] = $hostname;
+                    }
                 }
             }
-            
+
             $authInfoPw = $this->epp_random_auth_pw();
 
             $payload = [
