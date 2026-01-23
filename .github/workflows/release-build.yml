@@ -21,40 +21,19 @@ jobs:
           php-version: "8.3"
           tools: composer:v2
 
-      - name: Prepare namingo workspace
-        run: |
-          set -euxo pipefail
-          rm -rf namingo dist
-          mkdir -p namingo
-
-          # Copy repo contents into ./namingo (excluding CI + build artifacts)
-          rsync -a --delete \
-            --exclude ".git" \
-            --exclude ".github" \
-            --exclude "dist" \
-            --exclude "namingo" \
-            --exclude "tests" \
-            --exclude ".editorconfig" \
-            --exclude ".gitignore" \
-            ./ namingo/
-
       - name: Composer install inside namingo
         run: |
           set -euxo pipefail
           cd namingo
           composer require pinga/tembo --no-interaction --no-progress
 
-      - name: Build archives (root contains namingo/)
+      - name: Build archives (repo root, includes namingo/vendor)
         run: |
           set -euxo pipefail
           TAG="${{ github.event.release.tag_name }}"
           NAME="whmcs-epp-${TAG}"
 
           mkdir -p dist
-          rm -rf "dist/${NAME}"
-          mkdir -p "dist/${NAME}"
-
-          # Package with top-level folder NAME/, and inside it a namingo/ folder
           rsync -a --delete \
             --exclude ".git" \
             --exclude ".github" \
@@ -62,7 +41,7 @@ jobs:
             --exclude "tests" \
             --exclude ".editorconfig" \
             --exclude ".gitignore" \
-            namingo/ "dist/${NAME}/namingo/"
+            ./ "dist/${NAME}/"
 
           (cd dist && zip -r "${NAME}.zip" "${NAME}")
           (cd dist && tar -czf "${NAME}.tar.gz" "${NAME}")
