@@ -65,39 +65,21 @@ This module is designed to work with both gTLD and ccTLD registries and provides
 
 ## Installation
 
-1. Use our automated installer, or continue with steps 2-5 below.
+1. Use our **[Module Customizer Tool](https://namingo.org/foss-module/)** to generate a fine-tuned EPP registrar module specifically for your registry.
 
-```bash
-wget https://raw.githubusercontent.com/getpinga/fossbilling-epp-rfc/main/install_epp_module.sh -O install_epp_module.sh && chmod +x install_epp_module.sh && ./install_epp_module.sh
-```
+2. Extract the **generated archive** (as produced by the Module Customizer Tool) into `/tmp`
 
-2. Download this repository which contains the epp.php file. After successfully downloading the repository, move the epp.php file into the `[FOSSBilling]/library/Registrar/Adapter` directory.
+3. Move the `namingo` directory and the synchronization script `YourRegistryNameSync.php` in the main `[FOSSBilling]` directory. Then place your `key.pem` and `cert.pem` files there too.
 
-Next, rename `epp.php` as `YourRegistryName.php`. Please ensure to replace "**YourRegistryName**" with the actual name of your registry.
+4. Move the main module file `YourRegistryName.php` into the `[FOSSBilling]/library/Registrar/Adapter` directory.
 
-Proceed to open the newly renamed file and locate the phrase "**Registrar_Adapter_EPP**". Replace it with "**Registrar_Adapter_YourRegistryName**".
-
-3. The synchronization script **eppSync.php** needs to be placed in the main `[FOSSBilling]` directory.
-
-Rename `eppSync.php` to `YourRegistryNameSync.php`.
-
-Edit `eppSync.php` and replace **Epp** in the line `$registrar = "Epp";` with the name of your registry provided in step 2.
-
-4. Set up a cron job that runs the sync module twice a day. Open crontab using the command `crontab -e` in your terminal.
+5. Set up a cron job that runs the sync module twice a day. Open crontab using the command `crontab -e` in your terminal.
 
 Add the following cron job:
 
 `0 0,12 * * * php /var/www/html/YourRegistryNameSync.php`
 
 This command schedules the synchronization script to run once every 12 hours (at midnight and noon).
-
-5. If EPP Client is not yet installed, create the Namingo directory and install it using Composer:
-
-```bash
-mkdir -p /var/www/html/namingo
-cd /var/www/html/namingo
-composer require pinga/tembo
-```
 
 ## Activation
 
@@ -109,13 +91,7 @@ composer require pinga/tembo
 
 ## Upgrading from v1.0.0
 
-1. **Replace the module script**
-   - Copy the latest version of the renamed module script into your FOSSBilling modules directory, overwriting the existing file.
-   - **Important:** ensure the filename stays **exactly the same** as the current one in your modules directory (do not change the name).
-
-2. **Re-run Step 5 (install/update EPP Client)**
-   - If EPP Client is not installed yet, it will be installed.
-   - If it is already installed, Composer will update/ensure dependencies as needed.
+- Repeat the install steps to overwrite all module files.
 
 ## Troubleshooting
 
@@ -158,7 +134,7 @@ Your feedback and inquiries are invaluable to Namingo's evolutionary journey. If
 
 We appreciate your involvement and patience as Namingo continues to grow and adapt.
 
-## 💖 Support This Project
+## Support This Project
 
 If you find FOSSBilling EPP Registrar useful, consider donating:
 
