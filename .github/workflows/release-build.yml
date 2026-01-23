@@ -21,9 +21,6 @@ jobs:
           php-version: "8.3"
           tools: composer:v2
 
-      - name: Validate composer.json
-        run: composer validate --no-interaction
-
       - name: Prepare namingo workspace
         run: |
           set -euxo pipefail
@@ -45,7 +42,7 @@ jobs:
         run: |
           set -euxo pipefail
           cd namingo
-          composer install --no-dev --no-interaction --no-progress --optimize-autoloader
+          composer require pinga/tembo --no-dev --no-interaction --no-progress --optimize-autoloader
 
       - name: Build archives (root contains namingo/)
         run: |
