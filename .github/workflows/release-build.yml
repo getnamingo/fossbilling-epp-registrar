@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euxo pipefail
           TAG="${{ github.event.release.tag_name }}"
-          NAME="whmcs-epp-${TAG}"
+          NAME="fossbilling-epp-${TAG}"
 
           mkdir -p dist
           rsync -a --delete \
