@@ -38,11 +38,11 @@ jobs:
             --exclude ".gitignore" \
             ./ namingo/
 
-      - name: Composer install (no-dev) inside namingo
+      - name: Composer install inside namingo
         run: |
           set -euxo pipefail
           cd namingo
-          composer require pinga/tembo --no-dev --no-interaction --no-progress --optimize-autoloader
+          composer require pinga/tembo --no-interaction --no-progress
 
       - name: Build archives (root contains namingo/)
         run: |
