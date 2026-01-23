@@ -24,6 +24,7 @@ jobs:
       - name: Composer install inside namingo
         run: |
           set -euxo pipefail
+          mkdir -p namingo
           cd namingo
           composer require pinga/tembo --no-interaction --no-progress
 
