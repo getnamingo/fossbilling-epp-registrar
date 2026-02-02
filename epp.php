@@ -565,7 +565,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 );
             }
             
-            if (empty($this->config['gtld']) && empty($this->config['min_data_set'])) {
+            if (empty($this->config['min_data_set'])) {
                 $contacts = [];
                 
                 $contactTypeMap = [
@@ -720,7 +720,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 'authInfoPw' => $authInfoPw,
             ];
 
-            if (empty($this->config['gtld']) && empty($this->config['min_data_set'])) {
+            if (empty($this->config['min_data_set'])) {
                 if ($profile === 'EU') {
                     $payload['registrant'] = $contacts[1] ?? null;
 
