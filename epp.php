@@ -171,10 +171,9 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 'login_extensions' => ['textarea', [
                     'label'       => 'EPP Login Extensions',
                     'required'    => false,
-                    'default'     => '',
+                    'default'     => 'urn:ietf:params:xml:ns:secDNS-1.1, urn:ietf:params:xml:ns:rgp-1.0',
                     'description' =>
                         "Comma-separated EPP login extension URIs.\n" .
-                        "Leave empty to use defaults.\n" .
                         "Example: urn:ietf:params:xml:ns:secDNS-1.1, urn:ietf:params:xml:ns:rgp-1.0",
                 ]],
 
