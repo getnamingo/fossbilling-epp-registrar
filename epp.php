@@ -2,7 +2,7 @@
 /**
  * Namingo EPP Registrar module for FOSSBilling (https://fossbilling.org/)
  *
- * Written in 2024-2025 by Taras Kondratyuk (https://namingo.org)
+ * Written in 2024-2026 by Taras Kondratyuk (https://namingo.org)
  * Based on Generic EPP with DNSsec Registrar Module for WHMCS written in 2019 by Lilian Rudenco (info@xpanel.com)
  * Work of Lilian Rudenco is under http://opensource.org/licenses/afl-3.0.php Academic Free License (AFL 3.0)
  *
@@ -195,6 +195,16 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'default'     => '',
                     'description' => 'Optional billing contact handle for EURid. Used only when EPP profile is EU.',
                 ]],
+
+                'epp_debug_log' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label'        => 'EPP Debug Logging',
+                    'default'      => '0',
+                    'description'  =>
+                        'Write EPP requests and responses to the Module Log for troubleshooting. ' .
+                        'Enable only while debugging, then disable.',
+                ]],
+
             ],
         ];
     }
@@ -1147,7 +1157,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $add = [];
 
-            foreach (['clientDeleteProhibited', 'clientTransferProhibited'] as $st) {
+            foreach (['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'] as $st) {
                 if (!isset($status[$st])) {
                     $add[] = $st;
                 }
@@ -1213,7 +1223,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $rem = [];
 
-            foreach (['clientDeleteProhibited', 'clientTransferProhibited'] as $st) {
+            foreach (['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'] as $st) {
                 if (isset($status[$st])) {
                     $rem[] = $st;
                 }
