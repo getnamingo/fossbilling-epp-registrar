@@ -1,4 +1,13 @@
 <?php
+/**
+ * Namingo EPP Registrar module for FOSSBilling (https://fossbilling.org/)
+ *
+ * Written in 2024-2026 by Taras Kondratyuk (https://namingo.org)
+ * Based on Generic EPP with DNSsec Registrar Module for WHMCS written in 2019 by Lilian Rudenco (info@xpanel.com)
+ * Work of Lilian Rudenco is under http://opensource.org/licenses/afl-3.0.php Academic Free License (AFL 3.0)
+ *
+ * @license MIT
+ */
 
 require_once __DIR__ . '/load.php';
 $di = include __DIR__ . '/di.php';
@@ -51,49 +60,72 @@ try {
 
     $epp = epp_client($config);
 
+    $sqlCheck = 'SELECT COUNT(*) FROM extension WHERE name = :name AND status = :status';
+    $stmtCheck = $pdo->prepare($sqlCheck);
+    $stmtCheck->bindValue(':name', 'registrar');
+    $stmtCheck->bindValue(':status', 'installed');
+    $stmtCheck->execute();
+    $count = (int)$stmtCheck->fetchColumn();
+
     foreach ($domains as $domainRow) {
         $domain = rtrim($domainRow['sld'], '.') . '.' . ltrim($domainRow['tld'], '.');
         $domainInfo = $epp->domainInfo([
             'domainname' => $domain,
         ]);
+        
+        $code = $domainInfo['code'] ?? null;
+        $err  = $domainInfo['error'] ?? '';
 
-        if (array_key_exists("error", $domainInfo) || (isset($domainInfo['code']) && $domainInfo['code'] == 2303)) {
-            if (strpos($domainInfo["error"], "Domain does not exist") !== false || (isset($domainInfo['code']) && $domainInfo['code'] == 2303)) {
+        if (array_key_exists("error", $domainInfo) || ($code == 2303)) {
+            $isNotExist = ($code == 2303) || (is_string($err) && strpos($err, "Domain does not exist") !== false);
+
+            if ($isNotExist) {
+                $stmt = $pdo->prepare('SELECT id FROM service_domain WHERE sld = :sld AND tld = :tld');
+                $stmt->bindValue(':sld', $domainRow['sld']);
+                $stmt->bindValue(':tld', $domainRow['tld']);
+                $stmt->execute();
+                $serviceDomain = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($serviceDomain) {
+                    $serviceId = $serviceDomain['id'];
+                    $stmt = $pdo->prepare('UPDATE client_order SET canceled_at = :canceled_at, status = :status, reason = :reason WHERE service_id = :service_id');
+                    $stmt->bindValue(':canceled_at', date('Y-m-d H:i:s'));
+                    $stmt->bindValue(':status', 'cancelled');
+                    $stmt->bindValue(':reason', 'domain deleted');
+                    $stmt->bindValue(':service_id', $serviceId);
+                    $stmt->execute();
+                }
+
                 $stmt = $pdo->prepare('DELETE FROM service_domain WHERE sld = :sld AND tld = :tld');
                 $stmt->bindValue(':sld', $domainRow['sld']);
                 $stmt->bindValue(':tld', $domainRow['tld']);
                 $stmt->execute();
             }
-            $stmt = $pdo->prepare('SELECT id FROM service_domain WHERE sld = :sld AND tld = :tld');
-            $stmt->bindValue(':sld', $domainRow['sld']);
-            $stmt->bindValue(':tld', $domainRow['tld']);
-            $stmt->execute();
-            $serviceDomain = $stmt->fetch(PDO::FETCH_ASSOC);
-            if ($serviceDomain) {
-                $serviceId = $serviceDomain['id'];
-                $stmt = $pdo->prepare('UPDATE client_order SET canceled_at = :canceled_at, status = :status, reason = :reason WHERE service_id = :service_id');
-                $stmt->bindValue(':canceled_at', date('Y-m-d H:i:s'));
-                $stmt->bindValue(':status', 'cancelled');
-                $stmt->bindValue(':reason', 'domain deleted');
-                $stmt->bindValue(':service_id', $serviceId);
-                $stmt->execute();
-            }
-            echo $domainInfo["error"] . " (" . $domain . ")" . PHP_EOL;
+
+            echo (($err !== '' ? $err : ('EPP error code ' . (string)$code)) . " (" . $domain . ")") . PHP_EOL;
             continue;
         }
 
-        $ns = $domainInfo['ns'];
+        $ns = $domainInfo['ns'] ?? null;
+        $ns1 = $ns2 = $ns3 = $ns4 = null;
 
-        $ns1 = isset($ns[1]) ? $ns[1] : null;
-        $ns2 = isset($ns[2]) ? $ns[2] : null;
-        $ns3 = isset($ns[3]) ? $ns[3] : null;
-        $ns4 = isset($ns[4]) ? $ns[4] : null;
+        if (is_array($ns) && count($ns) > 0) {
+            $ns = array_values($ns);
 
-        $exDate = $domainInfo['exDate'];
-        $datetime = new DateTime($exDate);
-        $formattedExDate = $datetime->format('Y-m-d H:i:s');
+            $ns1 = $ns[0] ?? null;
+            $ns2 = $ns[1] ?? null;
+            $ns3 = $ns[2] ?? null;
+            $ns4 = $ns[3] ?? null;
+        }
 
-        $statuses = $domainInfo['status'];
+        $exDate = $domainInfo['exDate'] ?? null;
+        $formattedExDate = null;
+        if ($exDate) {
+            try { $formattedExDate = (new DateTime($exDate))->format('Y-m-d H:i:s'); } catch (\Throwable $e) { $formattedExDate = null; }
+        }
+
+        $statuses = $domainInfo['status'] ?? [];
+        if (!is_array($statuses)) $statuses = [$statuses];
 
         $clientStatuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
         $serverStatuses = ['serverDeleteProhibited', 'serverTransferProhibited', 'serverUpdateProhibited'];
@@ -110,12 +142,7 @@ try {
            $locked = 0;
         }
 
-        $sqlCheck = 'SELECT COUNT(*) FROM extension WHERE name = :name AND status = :status';
-        $stmtCheck = $pdo->prepare($sqlCheck);
-        $stmtCheck->bindValue(':name', 'registrar');
-        $stmtCheck->bindValue(':status', 'installed');
-        $stmtCheck->execute();
-        $count = $stmtCheck->fetchColumn();
+        $authInfo = $domainInfo['authInfo'] ?? null;
 
         // Prepare the UPDATE statement
         $stmt = $pdo->prepare('UPDATE service_domain SET ns1 = :ns1, ns2 = :ns2, ns3 = :ns3, ns4 = :ns4, expires_at = :expires_at, locked = :locked, synced_at = :synced_at, transfer_code = :transfer_code WHERE sld = :sld AND tld = :tld');
@@ -126,7 +153,7 @@ try {
         $stmt->bindValue(':expires_at', $formattedExDate);
         $stmt->bindValue(':locked', $locked);
         $stmt->bindValue(':synced_at', date('Y-m-d H:i:s'));
-        $stmt->bindValue(':transfer_code', $domainInfo["authInfo"]);
+        $stmt->bindValue(':transfer_code', $authInfo);
         $stmt->bindValue(':sld', $domainRow['sld']);
         $stmt->bindValue(':tld', $domainRow['tld']);
         $stmt->execute();
@@ -149,129 +176,138 @@ try {
                 $stmt->bindValue(':id', $serviceId);
                 $stmt->execute();
                 $result = $stmt->fetch(PDO::FETCH_ASSOC);
-                $registrant_contact_id = $result['registrant_contact_id'];
+                $registrant_contact_id = $result['registrant_contact_id'] ?? null;
 
-                $contactInfo = $epp->contactInfo(['contact' => $registrant_contact_id]);
-                
-                if (isset($contactInfo['error'])) {
-                    echo $contactInfo['error'];
-                }
+                if (!empty($registrant_contact_id)) {
+                    $contactInfo = $epp->contactInfo(['contact' => $registrant_contact_id]);
+                    
+                    if (isset($contactInfo['error'])) {
+                        echo $contactInfo['error'];
+                    }
 
-                try {
-                    $stmt = $pdo->prepare('
-                        UPDATE service_domain 
-                        SET 
-                            contact_email = :contact_email,
-                            contact_company = :contact_company,
-                            contact_first_name = :contact_first_name,
-                            contact_last_name = :contact_last_name,
-                            contact_address1 = :contact_address1,
-                            contact_address2 = :contact_address2,
-                            contact_city = :contact_city,
-                            contact_state = :contact_state,
-                            contact_postcode = :contact_postcode,
-                            contact_country = :contact_country,
-                            contact_phone_cc = :contact_phone_cc,
-                            contact_phone = :contact_phone
-                       WHERE id = :id
-                    ');
+                    try {
+                        $stmt = $pdo->prepare('
+                            UPDATE service_domain 
+                            SET 
+                                contact_email = :contact_email,
+                                contact_company = :contact_company,
+                                contact_first_name = :contact_first_name,
+                                contact_last_name = :contact_last_name,
+                                contact_address1 = :contact_address1,
+                                contact_address2 = :contact_address2,
+                                contact_city = :contact_city,
+                                contact_state = :contact_state,
+                                contact_postcode = :contact_postcode,
+                                contact_country = :contact_country,
+                                contact_phone_cc = :contact_phone_cc,
+                                contact_phone = :contact_phone
+                           WHERE id = :id
+                        ');
 
-                    // Split name into first and last names
-                    $nameParts = explode(' ', $contactInfo['name']);
-                    $contactFirstName = array_shift($nameParts);
-                    $contactLastName = implode(' ', $nameParts);
+                        // Split name into first and last names
+                        $nameParts = explode(' ', $contactInfo['name'] ?? '');
+                        $contactFirstName = array_shift($nameParts);
+                        $contactLastName = implode(' ', $nameParts);
 
-                    // Split phone into country code and number
-                    $phoneParts = explode('.', $contactInfo['voice']);
-                    $contactPhoneCC = isset($phoneParts[0]) ? $phoneParts[0] : null;
-                    $contactPhone = isset($phoneParts[1]) ? $phoneParts[1] : null;
+                        // Split phone into country code and number
+                        $phoneParts = explode('.', $contactInfo['voice'] ?? '');
+                        $contactPhoneCC = isset($phoneParts[0]) ? $phoneParts[0] : null;
+                        $contactPhone = isset($phoneParts[1]) ? $phoneParts[1] : null;
 
-                    $stmt->bindValue(':contact_email', !empty($contactInfo['email']) ? $contactInfo['email'] : null);
-                    $stmt->bindValue(':contact_company', !empty($contactInfo['org']) ? $contactInfo['org'] : null);
-                    $stmt->bindValue(':contact_first_name', !empty($contactFirstName) ? $contactFirstName : null);
-                    $stmt->bindValue(':contact_last_name', !empty($contactLastName) ? $contactLastName : null);
-                    $stmt->bindValue(':contact_address1', !empty($contactInfo['street1']) ? $contactInfo['street1'] : null);
-                    $stmt->bindValue(':contact_address2', !empty($contactInfo['street2']) ? $contactInfo['street2'] : null);
-                    $stmt->bindValue(':contact_city', !empty($contactInfo['city']) ? $contactInfo['city'] : null);
-                    $stmt->bindValue(':contact_state', !empty($contactInfo['state']) ? $contactInfo['state'] : null);
-                    $stmt->bindValue(':contact_postcode', !empty($contactInfo['postal']) ? $contactInfo['postal'] : null);
-                    $stmt->bindValue(':contact_country', !empty($contactInfo['country']) ? $contactInfo['country'] : null);
-                    $stmt->bindValue(':contact_phone_cc', !empty($contactPhoneCC) ? $contactPhoneCC : null);
-                    $stmt->bindValue(':contact_phone', !empty($contactPhone) ? $contactPhone : null);
-                    $stmt->bindValue(':id', $serviceId);
-                    $stmt->execute();
+                        $stmt->bindValue(':contact_email', !empty($contactInfo['email']) ? $contactInfo['email'] : null);
+                        $stmt->bindValue(':contact_company', !empty($contactInfo['org']) ? $contactInfo['org'] : null);
+                        $stmt->bindValue(':contact_first_name', !empty($contactFirstName) ? $contactFirstName : null);
+                        $stmt->bindValue(':contact_last_name', !empty($contactLastName) ? $contactLastName : null);
+                        $stmt->bindValue(':contact_address1', !empty($contactInfo['street1']) ? $contactInfo['street1'] : null);
+                        $stmt->bindValue(':contact_address2', !empty($contactInfo['street2']) ? $contactInfo['street2'] : null);
+                        $stmt->bindValue(':contact_city', !empty($contactInfo['city']) ? $contactInfo['city'] : null);
+                        $stmt->bindValue(':contact_state', !empty($contactInfo['state']) ? $contactInfo['state'] : null);
+                        $stmt->bindValue(':contact_postcode', !empty($contactInfo['postal']) ? $contactInfo['postal'] : null);
+                        $stmt->bindValue(':contact_country', !empty($contactInfo['country']) ? $contactInfo['country'] : null);
+                        $stmt->bindValue(':contact_phone_cc', !empty($contactPhoneCC) ? $contactPhoneCC : null);
+                        $stmt->bindValue(':contact_phone', !empty($contactPhone) ? $contactPhone : null);
+                        $stmt->bindValue(':id', $serviceId);
+                        $stmt->execute();
 
-                    echo "Update successful for contact: ".$contactInfo['id'].PHP_EOL;
+                        echo "Update successful for contact: ".$contactInfo['id'].PHP_EOL;
 
-                } catch (PDOException $e) {
-                    exit("Database error: " . $e->getMessage().PHP_EOL);
+                    } catch (PDOException $e) {
+                        exit("Database error: " . $e->getMessage().PHP_EOL);
+                    }
                 }
             }
         }
 
         if ($count > 0) {
-            $selectStmt = $pdo->prepare('SELECT id FROM service_domain WHERE sld = :sld AND tld = :tld LIMIT 1');
-            $selectStmt->bindValue(':sld', $domainRow['sld']);
-            $selectStmt->bindValue(':tld', $domainRow['tld']);
-            $selectStmt->execute();
-            $domainId = $selectStmt->fetchColumn();
+            $roid = $domainInfo['roid'] ?? null;
+            $registrant = $domainInfo['registrant'] ?? null;
+            
+            if (empty($roid) && empty($registrant) && empty($domainInfo['contact']) && empty($domainInfo['status'])) {
+                // ignore
+            } else {
+                $selectStmt = $pdo->prepare('SELECT id FROM service_domain WHERE sld = :sld AND tld = :tld LIMIT 1');
+                $selectStmt->bindValue(':sld', $domainRow['sld']);
+                $selectStmt->bindValue(':tld', $domainRow['tld']);
+                $selectStmt->execute();
+                $domainId = $selectStmt->fetchColumn();
 
-            $sqlMeta = '
-                INSERT INTO domain_meta (domain_id, registry_domain_id, registrant_contact_id, admin_contact_id, tech_contact_id, billing_contact_id, created_at, updated_at)
-                VALUES (:domain_id, :registry_domain_id, :registrant_contact_id, :admin_contact_id, :tech_contact_id, :billing_contact_id, NOW(), NOW())
-                ON DUPLICATE KEY UPDATE
-                    registry_domain_id = VALUES(registry_domain_id),
-                    registrant_contact_id = VALUES(registrant_contact_id),
-                    admin_contact_id = VALUES(admin_contact_id),
-                    tech_contact_id = VALUES(tech_contact_id),
-                    billing_contact_id = VALUES(billing_contact_id),
-                   updated_at = NOW();
-            ';
-            $stmtMeta = $pdo->prepare($sqlMeta);
-            $stmtMeta->bindValue(':domain_id', $domainId);
-            $stmtMeta->bindValue(':registry_domain_id', $domainInfo['roid']);
-            $stmtMeta->bindValue(':registrant_contact_id', $domainInfo['registrant']);
-            $admin_contact_id = null;
-            $tech_contact_id = null;
-            $billing_contact_id = null;
-            foreach ($domainInfo['contact'] as $contact) {
-                if ($contact['type'] === 'admin') {
-                    $admin_contact_id = $contact['id'];
-                } elseif ($contact['type'] === 'tech') {
-                    $tech_contact_id = $contact['id'];
-                } elseif ($contact['type'] === 'billing') {
-                    $billing_contact_id = $contact['id'];
+                $sqlMeta = '
+                    INSERT INTO domain_meta (domain_id, registry_domain_id, registrant_contact_id, admin_contact_id, tech_contact_id, billing_contact_id, created_at, updated_at)
+                    VALUES (:domain_id, :registry_domain_id, :registrant_contact_id, :admin_contact_id, :tech_contact_id, :billing_contact_id, NOW(), NOW())
+                    ON DUPLICATE KEY UPDATE
+                        registry_domain_id = VALUES(registry_domain_id),
+                        registrant_contact_id = VALUES(registrant_contact_id),
+                        admin_contact_id = VALUES(admin_contact_id),
+                        tech_contact_id = VALUES(tech_contact_id),
+                        billing_contact_id = VALUES(billing_contact_id),
+                       updated_at = NOW();
+                ';
+                $stmtMeta = $pdo->prepare($sqlMeta);
+                $stmtMeta->bindValue(':domain_id', $domainId);
+                $stmtMeta->bindValue(':registry_domain_id', $roid);
+                $stmtMeta->bindValue(':registrant_contact_id', $registrant);
+                $admin_contact_id = null;
+                $tech_contact_id = null;
+                $billing_contact_id = null;
+                foreach (($domainInfo['contact'] ?? []) as $contact) {
+                    if ($contact['type'] === 'admin') {
+                        $admin_contact_id = $contact['id'];
+                    } elseif ($contact['type'] === 'tech') {
+                        $tech_contact_id = $contact['id'];
+                    } elseif ($contact['type'] === 'billing') {
+                        $billing_contact_id = $contact['id'];
+                    }
                 }
-            }
-            $stmtMeta->bindValue(':admin_contact_id', $admin_contact_id);
-            $stmtMeta->bindValue(':tech_contact_id', $tech_contact_id);
-            $stmtMeta->bindValue(':billing_contact_id', $billing_contact_id);
-            $stmtMeta->execute();
+                $stmtMeta->bindValue(':admin_contact_id', $admin_contact_id);
+                $stmtMeta->bindValue(':tech_contact_id', $tech_contact_id);
+                $stmtMeta->bindValue(':billing_contact_id', $billing_contact_id);
+                $stmtMeta->execute();
 
-            $status = $domainInfo['status'] ?? 'No status available';
-            $sqlStatus = '
-                INSERT INTO domain_status (domain_id, status, created_at)
-                VALUES (:domain_id, :status, NOW())
-                ON DUPLICATE KEY UPDATE
-                    status = VALUES(status),
-                    created_at = NOW();
-            ';
-            $stmtStatus = $pdo->prepare($sqlStatus);
+                $status = $domainInfo['status'] ?? 'ok';
+                $sqlStatus = '
+                    INSERT INTO domain_status (domain_id, status, created_at)
+                    VALUES (:domain_id, :status, NOW())
+                    ON DUPLICATE KEY UPDATE
+                        status = VALUES(status),
+                        created_at = NOW();
+                ';
+                $stmtStatus = $pdo->prepare($sqlStatus);
 
-            if (is_array($status)) {
-                foreach ($status as $singleStatus) {
+                if (is_array($status)) {
+                    foreach ($status as $singleStatus) {
+                        $stmtStatus->bindValue(':domain_id', $domainId);
+                        $stmtStatus->bindValue(':status', $singleStatus);
+                        $stmtStatus->execute();
+                    }
+                } else {
                     $stmtStatus->bindValue(':domain_id', $domainId);
-                    $stmtStatus->bindValue(':status', $singleStatus);
+                    $stmtStatus->bindValue(':status', $status);
                     $stmtStatus->execute();
                 }
-            } else {
-                $stmtStatus->bindValue(':domain_id', $domainId);
-                $stmtStatus->bindValue(':status', $status);
-                $stmtStatus->execute();
             }
-        }
 
-        echo "Update successful for domain: " . $domain . PHP_EOL;
+            echo "Update successful for domain: " . $domain . PHP_EOL;
+        }
     }
 } catch (PDOException $e) {
     exit("Database error: " . $e->getMessage().PHP_EOL);
