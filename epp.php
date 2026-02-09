@@ -45,7 +45,6 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             'registrarprefix'      => $options['registrarprefix'] ?? '',
             'set_authinfo_on_info' => !empty($options['set_authinfo_on_info']),
             'min_data_set'         => !empty($options['min_data_set']),
-            'gtld'                 => !empty($options['gtld']),
             'registry_profile'     => $options['registry_profile'] ?? 'generic',
 
             // Extensions
@@ -179,16 +178,12 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         "Example: urn:ietf:params:xml:ns:secDNS-1.1, urn:ietf:params:xml:ns:rgp-1.0",
                 ]],
 
-                'gtld' => ['radio', [
-                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
-                    'label'        => 'gTLD Registry',
-                    'description'  => 'Enable this if the registry is a generic TLD (gTLD) operated under ICANN policies.',
-                ]],
-
                 'min_data_set' => ['radio', [
                     'multiOptions' => ['1' => 'Yes', '0' => 'No'],
                     'label'        => 'Enable Minimum Data Set',
-                    'description'  => 'Use the ICANN Minimum Data Set.',
+                    'description'  =>
+                        'Enable this for gTLD registries that follow ICANN Minimum Data Set rules. ' .
+                        'When enabled, contact data is managed at account level and cannot be edited per domain.',
                 ]],
 
                 'eurid_billing_contact' => ['text', [
@@ -1029,8 +1024,9 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     public function enablePrivacyProtection(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Enabling Privacy protection: ' . $domain->getName());
+
         if ($this->config['min_data_set'] === true) {
-            throw new Registrar_Exception("Not applicable.");
+            throw new Registrar_Exception("Privacy protection is controlled by the registry and cannot be changed.");
         }
 
         try {
@@ -1131,8 +1127,9 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     public function disablePrivacyProtection(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Disabling Privacy protection: ' . $domain->getName());
+
         if ($this->config['min_data_set'] === true) {
-            throw new Registrar_Exception("Not applicable.");
+            throw new Registrar_Exception("Privacy protection is controlled by the registry and cannot be changed.");
         }
 
         try {
