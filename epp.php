@@ -55,6 +55,9 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             // EURid
             'eurid_billing_contact' => $options['eurid_billing_contact'] ?? null,
 
+            // NASK
+            'pl_contact_prefix' => $options['pl_contact_prefix'] ?? null,
+
             'epp_debug_log' => !empty($options['epp_debug_log']),
         ];
     }
@@ -191,6 +194,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'required'    => false,
                     'default'     => '',
                     'description' => 'Optional billing contact handle for EURid. Used only when EPP profile is EU.',
+                ]],
+
+                'pl_contact_prefix' => ['text', [
+                    'label'       => 'NASK (.pl) Contact Prefix',
+                    'required'    => false,
+                    'default'     => '',
+                    'description' => 'Optional contact ID prefix for NASK (.pl). Used when EPP profile is PL.',
                 ]],
 
                 'epp_debug_log' => ['radio', [
@@ -647,6 +657,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 $contactTypeMap = [
                     'EU'      => ['registrant', 'tech'],                 // EURid
                     'SWITCH'=> ['registrant', 'tech'],
+                    'PL'=> ['registrant'],
                     'generic'=> ['registrant', 'admin', 'tech', 'billing'],
                     'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
                 ];
@@ -659,6 +670,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 foreach ($contactTypes as $i => $contactType) {
 
                     $id = strtoupper($this->epp_random_contact_id());
+                    if ($profile === 'PL') {
+                        $prefix = trim($this->config['pl_contact_prefix'] ?? '');
+
+                        if ($prefix !== '') {
+                            $id = $prefix . $id;
+                        }
+                    }
                     $authInfoPw = $this->epp_random_auth_pw();
 
                     $contactCreate = $epp->contactCreate([
