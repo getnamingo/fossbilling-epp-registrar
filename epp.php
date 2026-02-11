@@ -526,7 +526,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Getting domain details: ' . $domain->getName());
         try {
             $epp = $this->epp_client();
-        
+
             $info = $epp->domainInfo([
                 'domainname' => $domain->getName(),
             ]);
@@ -584,7 +584,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     {
         $this->getLog()->debug('Removing domain: ' . $domain->getName());
         try {
-            $epp = epp_client($params);
+            $epp = $this->epp_client();
 
             $domainDelete = $epp->domainDelete([
                 'domainname' => $domain->getName(),
@@ -836,21 +836,40 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             ];
 
             if (empty($this->config['min_data_set'])) {
+                $payload['registrant'] = $contacts[1] ?? null;
+
+                $mapIndex = [
+                    'admin'   => 2,
+                    'tech'    => 3,
+                    'billing' => 4,
+                ];
+
+                if (in_array('tech', $contactTypes, true) && !in_array('admin', $contactTypes, true) && !in_array('billing', $contactTypes, true)) {
+                    $mapIndex['tech'] = 2;
+                }
+
+                $contactsPayload = [];
+
+                foreach (['admin','tech','billing'] as $role) {
+                    if (!in_array($role, $contactTypes, true)) {
+                        continue;
+                    }
+
+                    $idx = $mapIndex[$role] ?? null;
+                    if ($idx && !empty($contacts[$idx])) {
+                        $contactsPayload[$role] = $contacts[$idx];
+                    }
+                }
+
                 if ($profile === 'EU') {
-                    $payload['registrant'] = $contacts[1] ?? null;
+                    $euridBilling = trim($this->config['eurid_billing_contact'] ?? '');
+                    if ($euridBilling !== '') {
+                        $contactsPayload['billing'] = $euridBilling;
+                    }
+                }
 
-                    $payload['contacts'] = [
-                        'tech'    => $contacts[2] ?? null,
-                        'billing' => trim($this->config['eurid_billing_contact'] ?? '') ?: null,
-                    ];
-                } else {
-                    $payload['registrant'] = $contacts[1] ?? null;
-
-                    $payload['contacts'] = [
-                        'admin'   => $contacts[2] ?? null,
-                        'tech'    => $contacts[3] ?? null,
-                        'billing' => $contacts[4] ?? null,
-                    ];
+                if (!empty($contactsPayload)) {
+                    $payload['contacts'] = $contactsPayload;
                 }
             }
 
@@ -934,7 +953,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         $client = $domain->getContactRegistrar();
         try {
-            $epp = $this->epp_client($params);
+            $epp = $this->epp_client();
 
             $info = $epp->domainInfo([
                 'domainname' => $domain->getName(),
