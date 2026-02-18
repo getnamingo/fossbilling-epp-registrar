@@ -654,11 +654,12 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             
             if (empty($this->config['min_data_set'])) {
                 $contacts = [];
-                
+
                 $contactTypeMap = [
                     'EU'      => ['registrant', 'tech'],                 // EURid
                     'SWITCH'=> ['registrant', 'tech'],
                     'PL'=> ['registrant'],
+                    'GE'=> ['registrant'],
                     'generic'=> ['registrant', 'admin', 'tech', 'billing'],
                     'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
                 ];
