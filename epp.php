@@ -244,7 +244,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 );
             }
 
-            $item = ($domainCheck['domains'][1] ?? null);
+            $item = ($domainCheck['domains'][0] ?? null);
 
             if (!$item || empty($item['name'])) {
                 throw new Registrar_Exception('Domain check failed: empty response');
@@ -636,7 +636,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 );
             }
 
-            $item = ($domainCheck['domains'][1] ?? null);
+            $item = ($domainCheck['domains'][0] ?? null);
 
             if (!$item || empty($item['name'])) {
                 throw new Registrar_Exception('Domain check failed: empty response');
