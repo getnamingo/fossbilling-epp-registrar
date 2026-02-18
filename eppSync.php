@@ -27,18 +27,23 @@ try
 {
     $dsn = $dbConfig["type"] . ":host=" . $dbConfig["host"] . ";port=" . $dbConfig["port"] . ";dbname=" . $dbConfig["name"];
     $pdo = new PDO($dsn, $dbConfig["user"], $dbConfig["password"]);
-    $stmt = $pdo->prepare("SELECT * FROM tld_registrar WHERE registrar = :registrar");
+    $stmt = $pdo->prepare("SELECT id, config FROM tld_registrar WHERE registrar = :registrar LIMIT 1");
     $stmt->bindValue(":registrar", $registrar);
     $stmt->execute();
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    $config = [];
-
-    foreach ($rows as $row)
-    {
-        $config = json_decode($row["config"], true);
-        $registrar_id = $row["id"];
+    if (!$row) {
+        exit("Registrar not found: {$registrar}" . PHP_EOL);
     }
+
+    $config = json_decode($row['config'] ?? '', true);
+
+    if (!is_array($config)) {
+        $err = json_last_error_msg();
+        exit("Registrar config is empty/invalid JSON ({$err})" . PHP_EOL);
+    }
+
+    $registrar_id = (int)$row['id'];
 
     if (empty($config))
     {
