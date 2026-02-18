@@ -1080,7 +1080,6 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $client = $domain->getContactRegistrar();
             if (trim((string) $client->getCompany()) !== '') {
                 throw new Registrar_Exception('Domain privacy is available only for domains registered to individuals.');
-				return false;
             }
 
             try {
@@ -1237,7 +1236,6 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $client = $domain->getContactRegistrar();
             if (trim((string) $client->getCompany()) !== '') {
                 throw new Registrar_Exception('Domain privacy is available only for domains registered to individuals.');
-				return false;
             }
 
             try {
@@ -1480,7 +1478,15 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $add = [];
 
-            foreach (['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'] as $st) {
+            $profile = $this->config['registry_profile'] ?? 'generic';
+
+            $statuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
+
+            if ($profile === 'GE') {
+                $statuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
+            }
+
+            foreach ($statuses as $st) {
                 if (!isset($status[$st])) {
                     $add[] = $st;
                 }
@@ -1560,8 +1566,16 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $rem = [];
 
-            foreach (['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'] as $st) {
-                if (isset($status[$st])) {
+            $profile = $this->config['registry_profile'] ?? 'generic';
+
+            $statuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
+
+            if ($profile === 'GE') {
+                $statuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
+            }
+
+            foreach ($statuses as $st) {
+                if (!isset($status[$st])) {
                     $rem[] = $st;
                 }
             }
