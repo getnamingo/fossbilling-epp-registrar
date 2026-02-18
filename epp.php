@@ -153,6 +153,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'generic' => 'generic',
                         'EU'      => 'EU',
                         'FR'      => 'FR',
+                        'GE'      => 'GE',
                         'HR'      => 'HR',
                         'LV'      => 'LV',
                         'MX'      => 'MX',
@@ -1065,7 +1066,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $this->epp_client_logout($epp);
         }
     }
-    
+
     public function enablePrivacyProtection(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Enabling Privacy protection: ' . $domain->getName());
@@ -1074,77 +1075,37 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             throw new Registrar_Exception("Privacy protection is controlled by the registry and cannot be changed.");
         }
 
-        try {
-            $epp = $this->epp_client();
-
-            $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
-            ]);
-
-            if (isset($info['error'])) {
-                throw new Registrar_Exception($info['error']);
+        $profile = $this->config['registry_profile'] ?? 'generic';
+        if ($profile === 'GE') {
+            $client = $domain->getContactRegistrar();
+            if (trim((string) $client->getCompany()) !== '') {
+                throw new Registrar_Exception('Domain privacy is available only for domains registered to individuals.');
+				return false;
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
-                $this->getLog()->debug(
-                    'EPP domainInfo ' . $domain->getName() . ': ' .
-                    json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                );
-            }
+            try {
+                $epp = $this->epp_client();
 
-            $dcontact = [];
-            if (!empty($info['registrant'])) {
-                $dcontact['registrant'] = (string)$info['registrant'];
-            }
-
-            $rows = $info['contact'] ?? [];
-            if (is_array($rows)) {
-                foreach ($rows as $row) {
-                    if (!is_array($row)) continue;
-
-                    $type = (string)($row['type'] ?? '');
-                    $id   = (string)($row['id'] ?? '');
-
-                    if ($type === '' || $id === '') continue;
-
-                    $dcontact[$type] = $id;
-                }
-            }
-
-            $contact = [];
-            foreach ($dcontact as $id) {
-                if (isset($contact[$id])) {
-                    continue;
-                }
-                
+                $domain_name = $domain->getName();
                 $clTRID = str_replace('.', '', round(microtime(1), 3));
 
                 $xml = array(
-                    'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-              <command>
-                <update>
-                  <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
-                    <contact:id>'.$id.'</contact:id>
-                    <contact:chg>
-                      <contact:disclose flag="0">
-                        <contact:name type="int"/>
-                        <contact:addr type="int"/>
-                        <contact:voice/>
-                        <contact:fax/>
-                        <contact:email/>
-                      </contact:disclose>
-                    </contact:chg>
-                  </contact:update>
-                </update>
-                <clTRID>'.$clTRID.'</clTRID>
-              </command>
-            </epp>
-            ');
+                    'xml' => '<?xml version="1.0" encoding="UTF-8"?>
+                        <epp xmlns="urn:ietf:params:xml:ns:epp-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+                           <command>
+                              <update>
+                                 <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
+                                    <domain:name>'.$domain_name.'</domain:name>
+                                    <domain:add>
+                                       <domain:status s="hiddenInWhoIs" lang="en" />
+                                    </domain:add>
+                                 </domain:update>
+                              </update>
+                            <clTRID>'.$clTRID.'</clTRID>
+                          </command>
+                        </epp>');
                 $rawXml = $epp->rawXml($xml);
-                
+
                 if (isset($rawXml['error'])) {
                     throw new Registrar_Exception($rawXml['error']);
                 }
@@ -1155,17 +1116,111 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
                     );
                 }
-            }
 
-            return true;
-        } catch (Registrar_Exception $e) {
-            throw $e;
-        } catch (\Throwable $e) {
-            throw new Registrar_Exception(
-                'Privacy protection enable failed. Please try again later.'
-            );
-        } finally {
-            $this->epp_client_logout($epp);
+                return true;
+            } catch (Registrar_Exception $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+                throw new Registrar_Exception(
+                    'Privacy protection enable failed. Please try again later.'
+                );
+            } finally {
+                $this->epp_client_logout($epp);
+            }
+        } else {
+            try {
+                $epp = $this->epp_client();
+
+                $info = $epp->domainInfo([
+                    'domainname' => $domain->getName(),
+                ]);
+
+                if (isset($info['error'])) {
+                    throw new Registrar_Exception($info['error']);
+                }
+
+                if (!empty($this->config['epp_debug_log'])) {
+                    $this->getLog()->debug(
+                        'EPP domainInfo ' . $domain->getName() . ': ' .
+                        json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                    );
+                }
+
+                $dcontact = [];
+                if (!empty($info['registrant'])) {
+                    $dcontact['registrant'] = (string)$info['registrant'];
+                }
+
+                $rows = $info['contact'] ?? [];
+                if (is_array($rows)) {
+                    foreach ($rows as $row) {
+                        if (!is_array($row)) continue;
+
+                        $type = (string)($row['type'] ?? '');
+                        $id   = (string)($row['id'] ?? '');
+
+                        if ($type === '' || $id === '') continue;
+
+                        $dcontact[$type] = $id;
+                    }
+                }
+
+                $contact = [];
+                foreach ($dcontact as $id) {
+                    if (isset($contact[$id])) {
+                        continue;
+                    }
+                    
+                    $clTRID = str_replace('.', '', round(microtime(1), 3));
+
+                    $xml = array(
+                        'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+                <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+                  <command>
+                    <update>
+                      <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
+                        <contact:id>'.$id.'</contact:id>
+                        <contact:chg>
+                          <contact:disclose flag="0">
+                            <contact:name type="int"/>
+                            <contact:addr type="int"/>
+                            <contact:voice/>
+                            <contact:fax/>
+                            <contact:email/>
+                          </contact:disclose>
+                        </contact:chg>
+                      </contact:update>
+                    </update>
+                    <clTRID>'.$clTRID.'</clTRID>
+                  </command>
+                </epp>
+                ');
+                    $rawXml = $epp->rawXml($xml);
+                    
+                    if (isset($rawXml['error'])) {
+                        throw new Registrar_Exception($rawXml['error']);
+                    }
+
+                    if (!empty($this->config['epp_debug_log'])) {
+                        $this->getLog()->debug(
+                            'EPP rawXml ' . $domain->getName() . ': ' .
+                            json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                        );
+                    }
+                }
+
+                return true;
+            } catch (Registrar_Exception $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+                throw new Registrar_Exception(
+                    'Privacy protection enable failed. Please try again later.'
+                );
+            } finally {
+                $this->epp_client_logout($epp);
+            }
         }
     }
 
@@ -1177,77 +1232,37 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             throw new Registrar_Exception("Privacy protection is controlled by the registry and cannot be changed.");
         }
 
-        try {
-            $epp = $this->epp_client();
-
-            $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
-            ]);
-
-            if (isset($info['error'])) {
-                throw new Registrar_Exception($info['error']);
+        $profile = $this->config['registry_profile'] ?? 'generic';
+        if ($profile === 'GE') {
+            $client = $domain->getContactRegistrar();
+            if (trim((string) $client->getCompany()) !== '') {
+                throw new Registrar_Exception('Domain privacy is available only for domains registered to individuals.');
+				return false;
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
-                $this->getLog()->debug(
-                    'EPP domainInfo ' . $domain->getName() . ': ' .
-                    json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                );
-            }
+            try {
+                $epp = $this->epp_client();
 
-            $dcontact = [];
-            if (!empty($info['registrant'])) {
-                $dcontact['registrant'] = (string)$info['registrant'];
-            }
-
-            $rows = $info['contact'] ?? [];
-            if (is_array($rows)) {
-                foreach ($rows as $row) {
-                    if (!is_array($row)) continue;
-
-                    $type = (string)($row['type'] ?? '');
-                    $id   = (string)($row['id'] ?? '');
-
-                    if ($type === '' || $id === '') continue;
-
-                    $dcontact[$type] = $id;
-                }
-            }
-
-            $contact = [];
-            foreach ($dcontact as $id) {
-                if (isset($contact[$id])) {
-                    continue;
-                }
-                
+                $domain_name = $domain->getName();
                 $clTRID = str_replace('.', '', round(microtime(1), 3));
 
                 $xml = array(
-                    'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-              <command>
-                <update>
-                  <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
-                    <contact:id>'.$id.'</contact:id>
-                    <contact:chg>
-                      <contact:disclose flag="1">
-                        <contact:name type="int"/>
-                        <contact:addr type="int"/>
-                        <contact:voice/>
-                        <contact:fax/>
-                        <contact:email/>
-                      </contact:disclose>
-                    </contact:chg>
-                  </contact:update>
-                </update>
-                <clTRID>'.$clTRID.'</clTRID>
-              </command>
-            </epp>
-            ');
+                    'xml' => '<?xml version="1.0" encoding="UTF-8"?>
+                        <epp xmlns="urn:ietf:params:xml:ns:epp-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+                           <command>
+                              <update>
+                                 <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
+                                    <domain:name>'.$domain_name.'</domain:name>
+                                    <domain:rem>
+                                       <domain:status s="hiddenInWhoIs" lang="en" />
+                                    </domain:rem>
+                                 </domain:update>
+                              </update>
+                            <clTRID>'.$clTRID.'</clTRID>
+                          </command>
+                        </epp>');
                 $rawXml = $epp->rawXml($xml);
-                
+
                 if (isset($rawXml['error'])) {
                     throw new Registrar_Exception($rawXml['error']);
                 }
@@ -1258,17 +1273,111 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
                     );
                 }
-            }
 
-            return true;
-        } catch (Registrar_Exception $e) {
-            throw $e;
-        } catch (\Throwable $e) {
-            throw new Registrar_Exception(
-                'Privacy protection disable failed. Please try again later.'
-            );
-        } finally {
-            $this->epp_client_logout($epp);
+                return true;
+            } catch (Registrar_Exception $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+                throw new Registrar_Exception(
+                    'Privacy protection disable failed. Please try again later.'
+                );
+            } finally {
+                $this->epp_client_logout($epp);
+            }
+        } else {
+            try {
+                $epp = $this->epp_client();
+
+                $info = $epp->domainInfo([
+                    'domainname' => $domain->getName(),
+                ]);
+
+                if (isset($info['error'])) {
+                    throw new Registrar_Exception($info['error']);
+                }
+
+                if (!empty($this->config['epp_debug_log'])) {
+                    $this->getLog()->debug(
+                        'EPP domainInfo ' . $domain->getName() . ': ' .
+                        json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                    );
+                }
+
+                $dcontact = [];
+                if (!empty($info['registrant'])) {
+                    $dcontact['registrant'] = (string)$info['registrant'];
+                }
+
+                $rows = $info['contact'] ?? [];
+                if (is_array($rows)) {
+                    foreach ($rows as $row) {
+                        if (!is_array($row)) continue;
+
+                        $type = (string)($row['type'] ?? '');
+                        $id   = (string)($row['id'] ?? '');
+
+                        if ($type === '' || $id === '') continue;
+
+                        $dcontact[$type] = $id;
+                    }
+                }
+
+                $contact = [];
+                foreach ($dcontact as $id) {
+                    if (isset($contact[$id])) {
+                        continue;
+                    }
+                    
+                    $clTRID = str_replace('.', '', round(microtime(1), 3));
+
+                    $xml = array(
+                        'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+                <epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+                  <command>
+                    <update>
+                      <contact:update xmlns:contact="urn:ietf:params:xml:ns:contact-1.0">
+                        <contact:id>'.$id.'</contact:id>
+                        <contact:chg>
+                          <contact:disclose flag="1">
+                            <contact:name type="int"/>
+                            <contact:addr type="int"/>
+                            <contact:voice/>
+                            <contact:fax/>
+                            <contact:email/>
+                          </contact:disclose>
+                        </contact:chg>
+                      </contact:update>
+                    </update>
+                    <clTRID>'.$clTRID.'</clTRID>
+                  </command>
+                </epp>
+                ');
+                    $rawXml = $epp->rawXml($xml);
+                    
+                    if (isset($rawXml['error'])) {
+                        throw new Registrar_Exception($rawXml['error']);
+                    }
+
+                    if (!empty($this->config['epp_debug_log'])) {
+                        $this->getLog()->debug(
+                            'EPP rawXml ' . $domain->getName() . ': ' .
+                            json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                        );
+                    }
+                }
+
+                return true;
+            } catch (Registrar_Exception $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+                throw new Registrar_Exception(
+                    'Privacy protection disable failed. Please try again later.'
+                );
+            } finally {
+                $this->epp_client_logout($epp);
+            }
         }
     }
 
