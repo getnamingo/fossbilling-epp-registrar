@@ -1483,7 +1483,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $statuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
 
             if ($profile === 'GE') {
-                $statuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
+                $statuses = ['clientTransferProhibited', 'clientUpdateProhibited'];
             }
 
             foreach ($statuses as $st) {
@@ -1571,11 +1571,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $statuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
 
             if ($profile === 'GE') {
-                $statuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
+                $statuses = ['clientTransferProhibited', 'clientUpdateProhibited'];
             }
 
             foreach ($statuses as $st) {
-                if (!isset($status[$st])) {
+                if (isset($status[$st])) {
                     $rem[] = $st;
                 }
             }
