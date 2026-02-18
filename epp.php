@@ -691,7 +691,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'state'           => $client->getState() ?? '',
                         'postcode'        => $client->getZip() ?? '',
                         'country'         => $client->getCountry() ?? '',
-                        'fullphonenumber' => '+'.$client->getTelCc().'.'.$client->getTel() ?? '',
+                        'fullphonenumber' => 
+                            ($cc = preg_replace('/\D+/', '', (string) $client->getTelCc())) &&
+                            ($tel = preg_replace('/\D+/', '', (string) $client->getTel()))
+                                ? '+' . $cc . '.' . $tel
+                                : '',
                         'email'           => $client->getEmail() ?? '',
                         'authInfoPw'      => $authInfoPw,
                         // EU-only extras
@@ -1022,15 +1026,19 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'type'             => 'int',
                     'firstname'        => $client->getFirstName(),
                     'lastname'         => $client->getLastName(),
-                    'companyname'      => htmlspecialchars($client->getCompany()),
-                    'address1'         => htmlspecialchars($client->getAddress1()),
-                    'address2'         => htmlspecialchars($client->getAddress2()),
-                    'city'             => htmlspecialchars($client->getCity()),
-                    'state'            => htmlspecialchars($client->getState()),
-                    'postcode'         => htmlspecialchars($client->getZip()),
-                    'country'          => htmlspecialchars($client->getCountry()),
-                    'fullphonenumber'  => htmlspecialchars('+'.$client->getTelCc().'.'.$client->getTel()),
-                    'email'            => htmlspecialchars($client->getEmail()),
+                    'companyname'      => $client->getCompany(),
+                    'address1'         => $client->getAddress1(),
+                    'address2'         => $client->getAddress2(),
+                    'city'             => $client->getCity(),
+                    'state'            => $client->getState(),
+                    'postcode'         => $client->getZip(),
+                    'country'          => $client->getCountry(),
+                    'fullphonenumber' => 
+                        ($cc = preg_replace('/\D+/', '', (string) $client->getTelCc())) &&
+                        ($tel = preg_replace('/\D+/', '', (string) $client->getTel()))
+                            ? '+' . $cc . '.' . $tel
+                            : '',
+                    'email'            => $client->getEmail(),
                 ]);
 
                 if (isset($contactUpdate['error'])) {
