@@ -725,6 +725,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'vat' => ($profile === 'PT' && $client->getCompanyNumber())
                             ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
                             : null,
+                        // GE-only extras
+                        'nin' => ($profile === 'GE')
+                            ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
+                            : null,
                     ]);
 
                     if (!empty($contactCreate['error'])) {
