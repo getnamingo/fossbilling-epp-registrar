@@ -569,6 +569,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $domain->setNs3(isset($ns[2]) ? $ns[2] : '');
             $domain->setNs4(isset($ns[3]) ? $ns[3] : '');
 
+            $domain->setLocked(
+                (bool) array_filter(
+                    $info['status'] ?? [],
+                    fn($s) => str_ends_with($s, 'Prohibited') || str_ends_with($s, 'prohibited')
+                )
+            );
+
             return $domain;
         } catch (Registrar_Exception $e) {
             throw $e;
