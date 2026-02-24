@@ -94,6 +94,21 @@ chmod 600 cert.pem key.pem
 - Download the updated module and repeat the installation steps to replace the existing files.
 - After upgrading, verify that your module settings are still correct.
 
+## Mandatory FOSSBilling Core Change for .ge
+
+If you want to support `.ge` domains, this core change is required.
+
+Edit `[FOSSBilling_path]/modules/Servicedomain/Service.php` (around line 349) and find `$locked = $whois->getLocked();`. After the closing `}` of that `if` block, add:
+
+```php
+$privacy = $whois->getPrivacyEnabled();
+if ($privacy !== null) {
+    $model->privacy = $privacy;
+}
+```
+
+This must be re-applied after every FOSSBilling update.
+
 ## Troubleshooting
 
 1. **Multiple EPP modules conflict**
