@@ -216,11 +216,71 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             ],
         ];
     }
-    
+
     public function isDomaincanBeTransferred(Registrar_Domain $domain)
     {
         $this->getLog()->debug('Checking if domain can be transferred: ' . $domain->getName());
-        return true;
+
+        try {
+            $epp = $this->epp_client();
+
+            $info = $epp->domainInfo([
+                'domainname' => $domain->getName(),
+            ]);
+
+            if (!empty($info['error'])) {
+                throw new Registrar_Exception((string)$info['error']);
+            }
+
+            if (!empty($this->config['epp_debug_log'])) {
+                $this->getLog()->debug(
+                    'EPP domainInfo (transfer check) ' . $domain->getName() . ': ' .
+                    json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                );
+            }
+
+            $statuses = $info['status'] ?? [];
+            $statuses = is_array($statuses) ? $statuses : [$statuses];
+
+            $blocked = [
+                'clientTransferProhibited',
+                'serverTransferProhibited',
+            ];
+
+            foreach ($statuses as $st) {
+
+                if ($st === null || $st === '') {
+                    continue;
+                }
+
+                if (is_array($st)) {
+                    $st = $st['s'] ?? $st['status'] ?? $st['value'] ?? '';
+                }
+
+                if (in_array($st, $blocked, true)) {
+                    throw new Registrar_Exception(
+                        'Domain transfer is prohibited (status: ' . $st . '). ' .
+                        'Please unlock the domain at the current registrar and try again.'
+                    );
+                }
+
+                if ($st === 'pendingTransfer') {
+                    throw new Registrar_Exception('Domain already has a pending transfer.');
+                }
+            }
+
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'Domain transfer check failed. Please try again later.'
+            );
+        } finally {
+            if (isset($epp)) {
+                $this->epp_client_logout($epp);
+            }
+        }
     }
 
     public function isDomainAvailable(Registrar_Domain $domain)
