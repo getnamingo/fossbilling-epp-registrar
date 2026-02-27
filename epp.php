@@ -1164,11 +1164,6 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         $profile = $this->config['registry_profile'] ?? 'generic';
         if ($profile === 'GE') {
-            $client = $domain->getContactRegistrar();
-            if (trim((string) $client->getCompany()) !== '') {
-                throw new Registrar_Exception('Domain privacy is available only for domains registered to individuals.');
-            }
-
             try {
                 $epp = $this->epp_client();
 
@@ -1324,11 +1319,6 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         $profile = $this->config['registry_profile'] ?? 'generic';
         if ($profile === 'GE') {
-            $client = $domain->getContactRegistrar();
-            if (trim((string) $client->getCompany()) !== '') {
-                throw new Registrar_Exception('Domain privacy is available only for domains registered to individuals.');
-            }
-
             try {
                 $epp = $this->epp_client();
 
