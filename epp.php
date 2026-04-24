@@ -47,11 +47,16 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             'min_data_set'         => !empty($options['min_data_set']),
             'registry_profile'     => $options['registry_profile'] ?? 'generic',
 
+            // Objects
+            'login_objects' => isset($options['login_objects']) && $options['login_objects'] !== ''
+                ? array_map('trim', explode(',', $options['login_objects']))
+                : [],
+
             // Extensions
             'login_extensions' => isset($options['login_extensions']) && $options['login_extensions'] !== ''
                 ? array_map('trim', explode(',', $options['login_extensions']))
                 : [],
-            
+
             // EURid
             'eurid_billing_contact' => $options['eurid_billing_contact'] ?? null,
 
@@ -171,6 +176,15 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'multiOptions' => ['1' => 'Yes', '0' => 'No'],
                     'label'        => 'Set AuthInfo on Request',
                     'description'  => 'Enable if the registry does not return the transfer code on domain info and requires setting it manually first.',
+                ]],
+
+                'login_objects' => ['textarea', [
+                    'label'       => 'EPP Login Objects',
+                    'required'    => false,
+                    'default'     => 'urn:ietf:params:xml:ns:domain-1.0, urn:ietf:params:xml:ns:contact-1.0, urn:ietf:params:xml:ns:host-1.0',
+                    'description' =>
+                        "Comma-separated EPP login object URIs.\n" .
+                        "Example: urn:ietf:params:xml:ns:domain-1.0, urn:ietf:params:xml:ns:contact-1.0, urn:ietf:params:xml:ns:host-1.0",
                 ]],
 
                 'login_extensions' => ['textarea', [
@@ -1821,13 +1835,29 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             'allow_self_signed'=> true,
         ];
         if ($profile === 'generic') {
-            $raw = $this->config['login_extensions'] ?? '';
+            $rawObjects = $this->config['login_objects'] ?? '';
 
-            if (is_array($raw)) {
-                $info['loginExtensions'] = array_values(array_filter(array_map('trim', $raw)));
+            if (is_array($rawObjects)) {
+                $info['loginObjects'] = array_values(array_filter(array_map('trim', $rawObjects)));
             } else {
-                $info['loginExtensions'] = trim($raw) !== ''
-                    ? array_values(array_filter(array_map('trim', preg_split('/[,\s]+/', $raw))))
+                $info['loginObjects'] = trim($rawObjects) !== ''
+                    ? array_values(array_filter(array_map('trim', preg_split('/[,\s]+/', $rawObjects))))
+                    : [
+                        'urn:ietf:params:xml:ns:domain-1.0',
+                        'urn:ietf:params:xml:ns:contact-1.0',
+                        'urn:ietf:params:xml:ns:host-1.0',
+                    ];
+            }
+
+            $epp->setLoginObjects($info['loginObjects']);
+
+            $rawExtensions = $this->config['login_extensions'] ?? '';
+
+            if (is_array($rawExtensions)) {
+                $info['loginExtensions'] = array_values(array_filter(array_map('trim', $rawExtensions)));
+            } else {
+                $info['loginExtensions'] = trim($rawExtensions) !== ''
+                    ? array_values(array_filter(array_map('trim', preg_split('/[,\s]+/', $rawExtensions))))
                     : [
                         'urn:ietf:params:xml:ns:secDNS-1.1',
                         'urn:ietf:params:xml:ns:rgp-1.0',
