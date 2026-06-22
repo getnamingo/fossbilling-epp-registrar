@@ -993,49 +993,34 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             if ($profile === 'GE' && trim((string)($client->getCompany() ?? '')) === '') {
-                try {
-                    $epp = $this->epp_client();
+                $clTRID = str_replace('.', '', round(microtime(1), 3));
 
-                    $domain_name = $domain->getName();
-                    $clTRID = str_replace('.', '', round(microtime(1), 3));
+                $xml = array(
+                    'xml' => '<?xml version="1.0" encoding="UTF-8"?>
+                        <epp xmlns="urn:ietf:params:xml:ns:epp-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+                           <command>
+                              <update>
+                                 <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
+                                    <domain:name>'.$domain->getName().'</domain:name>
+                                    <domain:add>
+                                       <domain:status s="hiddenInWhoIs" lang="en" />
+                                    </domain:add>
+                                 </domain:update>
+                              </update>
+                            <clTRID>'.$clTRID.'</clTRID>
+                          </command>
+                        </epp>');
+                $rawXml = $epp->rawXml($xml);
 
-                    $xml = array(
-                        'xml' => '<?xml version="1.0" encoding="UTF-8"?>
-                            <epp xmlns="urn:ietf:params:xml:ns:epp-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
-                               <command>
-                                  <update>
-                                     <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-                                        <domain:name>'.$domain_name.'</domain:name>
-                                        <domain:add>
-                                           <domain:status s="hiddenInWhoIs" lang="en" />
-                                        </domain:add>
-                                     </domain:update>
-                                  </update>
-                                <clTRID>'.$clTRID.'</clTRID>
-                              </command>
-                            </epp>');
-                    $rawXml = $epp->rawXml($xml);
+                if (isset($rawXml['error'])) {
+                    throw new Registrar_Exception('GE privacy update failed: ' . $rawXml['error']);
+                }
 
-                    if (isset($rawXml['error'])) {
-                        throw new Registrar_Exception($rawXml['error']);
-                    }
-
-                    if (!empty($this->config['epp_debug_log'])) {
-                        $this->getLog()->debug(
-                            'EPP rawXml ' . $domain->getName() . ': ' .
-                            json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                        );
-                    }
-                } catch (Registrar_Exception $e) {
-                    throw $e;
-                } catch (\Throwable $e) {
-                    throw new Registrar_Exception(
-                        'Privacy protection enable failed. Please try again later.'
+                if (!empty($this->config['epp_debug_log'])) {
+                    $this->getLog()->debug(
+                        'EPP rawXml ' . $domain->getName() . ': ' .
+                        json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
                     );
-                } finally {
-                    if (isset($epp)) {
-                        $this->epp_client_logout($epp);
-                    }
                 }
             }
 
