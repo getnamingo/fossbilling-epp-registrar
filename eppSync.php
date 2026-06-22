@@ -132,7 +132,7 @@ try {
         $statuses = $domainInfo['status'] ?? [];
         if (!is_array($statuses)) $statuses = [$statuses];
 
-        $clientStatuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
+        $clientStatuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
         $serverStatuses = ['serverDeleteProhibited', 'serverTransferProhibited', 'serverUpdateProhibited'];
 
         // Check if all client statuses are present in the $statuses array

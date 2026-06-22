@@ -1641,7 +1641,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $profile = $this->config['registry_profile'] ?? 'generic';
 
-            $statuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
+            $statuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
 
             if ($profile === 'GE') {
                 $statuses = ['clientTransferProhibited', 'clientUpdateProhibited'];
@@ -1731,7 +1731,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $profile = $this->config['registry_profile'] ?? 'generic';
 
-            $statuses = ['clientDeleteProhibited', 'clientTransferProhibited', 'clientUpdateProhibited'];
+            $statuses = ['clientDeleteProhibited', 'clientTransferProhibited'];
 
             if ($profile === 'GE') {
                 $statuses = ['clientTransferProhibited', 'clientUpdateProhibited'];
