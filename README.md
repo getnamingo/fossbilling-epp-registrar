@@ -88,9 +88,25 @@ chmod 600 cert.pem key.pem
 
 7. Add a new Top Level Domain (TLD) using your module from the "**New Top Level Domain**" tab. Make sure to configure all necessary details, such as pricing, within this tab.
 
-### Mandatory FOSSBilling Core Change (FOSSBilling 0.8.3)
+### Mandatory FOSSBilling Core Changes (FOSSBilling 0.8.3)
 
-If you are using **FOSSBilling 0.8.3**, this temporary core change is required due to a bug in FOSSBilling. The issue has already been fixed upstream and will be included in **FOSSBilling 0.8.4**.
+If you are using **FOSSBilling 0.8.3**, the following temporary core changes are required due to bugs in FOSSBilling.
+
+#### 1. Prevent Duplicate Domain Registration
+
+Edit `[FOSSBilling_path]/modules/Order/Service.php` and at the very beginning of the `activateOrder()` method, add:
+
+```php
+$order = $this->di['db']->load('ClientOrder', $order->id);
+
+if ($order->status === \Model_ClientOrder::STATUS_ACTIVE) {
+    return true;
+}
+```
+
+This workaround prevents duplicate order activation, which may otherwise result in a second domain registration attempt during checkout.
+
+#### 2. Registrar Adapter Autoload Fix
 
 Edit `[FOSSBilling_path]/modules/Servicedomain/Service.php` and find:
 
@@ -106,9 +122,9 @@ $file = Path::join(PATH_LIBRARY, 'Registrar', 'Adapter', "{$model->registrar}.ph
 require_once $file;
 ```
 
-This workaround is only required for **FOSSBilling 0.8.3**. Once you upgrade to **FOSSBilling 0.8.4** (or later), this change is no longer needed.
+This workaround is only required for **FOSSBilling 0.8.3** and will no longer be needed once **FOSSBilling 0.8.4** is released.
 
-### Mandatory FOSSBilling Core Change (FOSSBilling < 0.8.3)
+#### 3. .ge Domain Privacy Support (FOSSBilling < 0.8.3)
 
 If you are using **FOSSBilling earlier than 0.8.3** **and** plan to offer **`.ge` domains**, this core change is required.
 
