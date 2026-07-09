@@ -22,10 +22,20 @@ use Pinga\Tembo\EppRegistryFactory;
 
 $dbConfig = \FOSSBilling\Config::getProperty('db', []);
 $registrar = "Epp";
+$type = $dbConfig['type'] ?? null;
+
+if (!$type && isset($dbConfig['driver'])) {
+    $type = match ($dbConfig['driver']) {
+        'pdo_mysql' => 'mysql',
+        'pdo_pgsql' => 'pgsql',
+        'pdo_sqlite' => 'sqlite',
+        default => preg_replace('/^pdo_/', '', $dbConfig['driver']),
+    };
+}
 
 try
 {
-    $dsn = $dbConfig["type"] . ":host=" . $dbConfig["host"] . ";port=" . $dbConfig["port"] . ";dbname=" . $dbConfig["name"];
+    $dsn = $type . ":host=" . $dbConfig["host"] . ";port=" . $dbConfig["port"] . ";dbname=" . $dbConfig["name"];
     $pdo = new PDO($dsn, $dbConfig["user"], $dbConfig["password"]);
     $stmt = $pdo->prepare("SELECT id, config FROM tld_registrar WHERE registrar = :registrar LIMIT 1");
     $stmt->bindValue(":registrar", $registrar);
@@ -74,10 +84,13 @@ try {
 
     foreach ($domains as $domainRow) {
         $domain = rtrim($domainRow['sld'], '.') . '.' . ltrim($domainRow['tld'], '.');
+        $domain = function_exists('idn_to_ascii')
+            ? (idn_to_ascii($domain, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain)
+            : $domain;
         $domainInfo = $epp->domainInfo([
             'domainname' => $domain,
         ]);
-        
+
         $code = $domainInfo['code'] ?? null;
         $err  = $domainInfo['error'] ?? '';
 
@@ -241,6 +254,8 @@ try {
                     }
                 }
             }
+
+            echo "Update successful for domain: " . $domain . PHP_EOL;
         }
 
         if ($count > 0) {
@@ -310,8 +325,6 @@ try {
                     $stmtStatus->execute();
                 }
             }
-
-            echo "Update successful for domain: " . $domain . PHP_EOL;
         }
     }
 } catch (PDOException $e) {

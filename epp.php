@@ -341,7 +341,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             throw new Registrar_Exception(
-                'Domain is not available' . ($reason ? ': ' . $reason : '')
+                'Domain is not available' . ($reason ? ': ' . $reason : ''), null, 1000
             );
         } catch (Registrar_Exception  $e) {
             throw $e;
