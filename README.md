@@ -88,15 +88,29 @@ chmod 600 cert.pem key.pem
 
 7. Add a new Top Level Domain (TLD) using your module from the "**New Top Level Domain**" tab. Make sure to configure all necessary details, such as pricing, within this tab.
 
-## Upgrade
+### Mandatory FOSSBilling Core Change (FOSSBilling 0.8.3)
 
-- Before upgrading, note your current module settings.
-- Download the updated module and repeat the installation steps to replace the existing files.
-- After upgrading, verify that your module settings are still correct.
+If you are using **FOSSBilling 0.8.3**, this temporary core change is required due to a bug in FOSSBilling. The issue has already been fixed upstream and will be included in **FOSSBilling 0.8.4**.
 
-## Mandatory FOSSBilling Core Change for .ge
+Edit `[FOSSBilling_path]/modules/Servicedomain/Service.php` and find:
 
-If you want to support `.ge` domains, this core change is required.
+```php
+$class = sprintf('Registrar_Adapter_%s', $model->registrar);
+```
+
+Immediately after it, add:
+
+```php
+$file = Path::join(PATH_LIBRARY, 'Registrar', 'Adapter', "{$model->registrar}.php");
+
+require_once $file;
+```
+
+This workaround is only required for **FOSSBilling 0.8.3**. Once you upgrade to **FOSSBilling 0.8.4** (or later), this change is no longer needed.
+
+### Mandatory FOSSBilling Core Change (FOSSBilling < 0.8.3)
+
+If you are using **FOSSBilling earlier than 0.8.3** **and** plan to offer **`.ge` domains**, this core change is required.
 
 Edit `[FOSSBilling_path]/modules/Servicedomain/Service.php` (around line 349) and find `$locked = $whois->getLocked();`. After the closing `}` of that `if` block, add:
 
@@ -107,7 +121,15 @@ if ($privacy !== null) {
 }
 ```
 
-This must be re-applied after every FOSSBilling update.
+This change is **already included in FOSSBilling 0.8.3 and later**, so it is **not** required on newer versions.
+
+If you apply this patch to an older version, it must be re-applied after every FOSSBilling update.
+
+## Upgrade
+
+- Before upgrading, note your current module settings.
+- Download the updated module and repeat the installation steps to replace the existing files.
+- After upgrading, verify that your module settings are still correct.
 
 ## Troubleshooting
 
