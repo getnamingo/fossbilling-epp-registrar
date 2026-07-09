@@ -237,9 +237,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
 
             if (!empty($info['error'])) {
@@ -303,9 +307,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $domainCheck = $epp->domainCheck([
-                'domains' => [$domain->getName()],
+                'domains' => [$domain_name],
             ]);
 
             if (!empty($domainCheck['error'])) {
@@ -357,9 +365,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Ns4: ' . $domain->getNs4());
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
 
             if (isset($info['error'])) {
@@ -467,7 +479,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             if (in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 $payload = [
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                     'nss'        => [],
                 ];
 
@@ -491,7 +503,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
                 $domainUpdateNS = $epp->domainUpdateNS($payload);
             } else {
-                $payload = ['domainname' => $domain->getName()];
+                $payload = ['domainname' => $domain_name];
 
                 foreach (array_values($final) as $idx => $host) {
                     $payload['ns' . ($idx + 1)] = $host;
@@ -531,11 +543,15 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Epp code: ' . $domain->getEpp());
         try {
             $epp = $this->epp_client();
-            
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
+
             $profile = $this->config['registry_profile'] ?? 'generic';
             if ($profile === 'FR') {
                 $domainInfo = $epp->domainInfo([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                 ]);
 
                 if (isset($domainInfo['error'])) {
@@ -561,7 +577,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 }
 
                 $domainTransfer = $epp->domainTransfer([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                     'years'      => 1,
                     'authInfoPw' => $domain->getEpp(),
                     'op'         => 'request',
@@ -570,7 +586,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 ]);
             } else {
                 $domainTransfer = $epp->domainTransfer([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                     'years'      => 1,
                     'authInfoPw' => $domain->getEpp(),
                     'op'         => 'request',
@@ -607,9 +623,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Getting domain details: ' . $domain->getName());
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
 
             if (!empty($info['error'])) {
@@ -687,9 +707,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Removing domain: ' . $domain->getName());
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $domainDelete = $epp->domainDelete([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
 
             if (isset($domainDelete['error'])) {
@@ -724,9 +748,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $domainCheck = $epp->domainCheck([
-                'domains' => [$domain->getName()],
+                'domains' => [$domain_name],
             ]);
 
             if (!empty($domainCheck['error'])) {
@@ -942,7 +970,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $authInfoPw = $this->epp_random_auth_pw();
 
             $payload = [
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
                 'period'     => $period,
                 'nss'        => $nss,
                 'authInfoPw' => $authInfoPw,
@@ -1001,7 +1029,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                            <command>
                               <update>
                                  <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0" xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-                                    <domain:name>'.$domain->getName().'</domain:name>
+                                    <domain:name>'.$domain_name.'</domain:name>
                                     <domain:add>
                                        <domain:status s="hiddenInWhoIs" lang="en" />
                                     </domain:add>
@@ -1054,9 +1082,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
         try {
             $epp = $this->epp_client();
-        
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
+
             $domainRenew = $epp->domainRenew([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
                 'regperiod'  => 1,
             ]);
 
@@ -1103,9 +1135,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $client = $domain->getContactRegistrar();
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
 
             if (isset($info['error'])) {
@@ -1225,8 +1261,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         if ($profile === 'GE') {
             try {
                 $epp = $this->epp_client();
-
                 $domain_name = $domain->getName();
+                $domain_name = function_exists('idn_to_ascii')
+                    ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                    : $domain_name;
                 $clTRID = str_replace('.', '', round(microtime(1), 3));
 
                 $xml = array(
@@ -1272,9 +1310,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         } else {
             try {
                 $epp = $this->epp_client();
+                $domain_name = $domain->getName();
+                $domain_name = function_exists('idn_to_ascii')
+                    ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                    : $domain_name;
 
                 $info = $epp->domainInfo([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                 ]);
 
                 if (isset($info['error'])) {
@@ -1380,8 +1422,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         if ($profile === 'GE') {
             try {
                 $epp = $this->epp_client();
-
                 $domain_name = $domain->getName();
+                $domain_name = function_exists('idn_to_ascii')
+                    ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                    : $domain_name;
                 $clTRID = str_replace('.', '', round(microtime(1), 3));
 
                 $xml = array(
@@ -1427,9 +1471,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         } else {
             try {
                 $epp = $this->epp_client();
+                $domain_name = $domain->getName();
+                $domain_name = function_exists('idn_to_ascii')
+                    ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                    : $domain_name;
 
                 $info = $epp->domainInfo([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                 ]);
 
                 if (isset($info['error'])) {
@@ -1528,13 +1576,17 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $this->getLog()->debug('Retrieving domain transfer code: ' . $domain->getName());
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
             $eppcode = null;
             
             if (!empty($this->config['set_authinfo_on_info'])) {
                 $eppcode = $this->epp_random_auth_pw();
 
                 $info = $epp->domainUpdateAuthinfo([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                     'authInfo'   => $eppcode,
                 ]);
                 
@@ -1550,7 +1602,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 }
             } else {
                 $info = $epp->domainInfo([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                 ]);
 
                 if (!empty($info['error'])) {
@@ -1587,9 +1639,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $return = array();
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
                 
             if (isset($info['error'])) {
@@ -1640,7 +1696,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             foreach ($add as $st) {
                 $resp = $epp->domainUpdateStatus([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                     'command'    => 'add',
                     'status'     => $st,
                 ]);
@@ -1677,9 +1733,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $return = array();
         try {
             $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
 
             $info = $epp->domainInfo([
-                'domainname' => $domain->getName(),
+                'domainname' => $domain_name,
             ]);
                 
             if (isset($info['error'])) {
@@ -1730,7 +1790,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             foreach ($rem as $st) {
                 $resp = $epp->domainUpdateStatus([
-                    'domainname' => $domain->getName(),
+                    'domainname' => $domain_name,
                     'command'    => 'rem',
                     'status'     => $st,
                 ]);
