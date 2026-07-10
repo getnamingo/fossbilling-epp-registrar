@@ -401,6 +401,9 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 }
 
                 $v = (string)$v;
+                $v = function_exists('idn_to_ascii')
+                    ? (idn_to_ascii($v, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $v)
+                    : $v;
 
                 if (in_array($v, $current, true)) {
                     continue;
@@ -473,6 +476,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
               if (!$v) {
                 continue;
               }
+
+              $v = (string)$v;
+              $v = function_exists('idn_to_ascii')
+                  ? (idn_to_ascii($v, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $v)
+                  : $v;
 
               $final["ns$i"] = $v;
             }
@@ -886,6 +894,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         continue;
                     }
 
+                    $hostname = (string)$hostname;
+                    $hostname = function_exists('idn_to_ascii')
+                        ? (idn_to_ascii($hostname, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $hostname)
+                        : $hostname;
+
                     $hostCheck = $epp->hostCheck([
                         'hostname' => $hostname,
                     ]);
@@ -942,6 +955,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         continue;
                     }
 
+                    $host = (string)$host;
+                    $host = function_exists('idn_to_ascii')
+                        ? (idn_to_ascii($host, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $host)
+                        : $host;
+
                     $ns = ['hostName' => $host];
 
                     if (preg_match('/\.(eu|hr|ge|lv)$/i', $host)) {
@@ -962,6 +980,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
                     $hostname = $domain->{'get' . ucfirst($nsKey)}();
                     if (!empty($hostname)) {
+                        $hostname = (string)$hostname;
+                        $hostname = function_exists('idn_to_ascii')
+                            ? (idn_to_ascii($hostname, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $hostname)
+                            : $hostname;
+
                         $nss[] = $hostname;
                     }
                 }
