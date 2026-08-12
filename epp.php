@@ -1844,6 +1844,78 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
     }
 
+    public function getDNSSEC(Registrar_Domain $domain): array
+    {
+        $this->getLog()->debug('Getting DNSSEC records: ' . $domain->getName());
+
+        try {
+            $epp = $this->epp_client();
+
+            $domainName = $domain->getName();
+            $domainName = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domainName, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domainName)
+                : $domainName;
+
+            $info = $epp->domainInfo([
+                'domainname' => $domainName,
+            ]);
+
+            if (!empty($info['error'])) {
+                throw new Registrar_Exception((string) $info['error']);
+            }
+
+            $records = [];
+            $dsData = $info['dsData'] ?? [];
+
+            if (!is_array($dsData)) {
+                return [];
+            }
+
+            foreach ($dsData as $record) {
+                if (
+                    !is_array($record)
+                    || !isset(
+                        $record['keyTag'],
+                        $record['alg'],
+                        $record['digestType'],
+                        $record['digest']
+                    )
+                    || !is_numeric($record['keyTag'])
+                    || !is_numeric($record['alg'])
+                    || !is_numeric($record['digestType'])
+                    || !is_scalar($record['digest'])
+                ) {
+                    continue;
+                }
+
+                $records[] = [
+                    'key_tag' => (int) $record['keyTag'],
+                    'algorithm' => (int) $record['alg'],
+                    'digest_type' => (int) $record['digestType'],
+                    'digest' => strtoupper(
+                        (string) preg_replace(
+                            '/\s+/',
+                            '',
+                            (string) $record['digest']
+                        )
+                    ),
+                ];
+            }
+
+            return $records;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'DNSSEC record lookup failed. Please try again later.'
+            );
+        } finally {
+            if (isset($epp)) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
     public function updateDNSSEC(Registrar_Domain $domain, array $params): array
     {
         $this->getLog()->debug('Updating DNSSEC for domain: ' . $domain->getName());
