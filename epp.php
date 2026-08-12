@@ -1844,6 +1844,147 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
     }
 
+    public function updateDNSSEC(Registrar_Domain $domain, array $params): array
+    {
+        $this->getLog()->debug('Updating DNSSEC for domain: ' . $domain->getName());
+
+        $command = strtolower(trim((string) ($params['command'] ?? '')));
+
+        if (!in_array($command, ['add', 'rem', 'addrem'], true)) {
+            throw new Registrar_Exception('Unsupported DNSSEC command.');
+        }
+
+        $required = [
+            'keyTag_1',
+            'alg_1',
+            'digestType_1',
+            'digest_1',
+        ];
+
+        if ($command === 'addrem') {
+            $required = array_merge($required, [
+                'keyTag_2',
+                'alg_2',
+                'digestType_2',
+                'digest_2',
+            ]);
+        }
+
+        foreach ($required as $field) {
+            if (
+                !array_key_exists($field, $params)
+                || $params[$field] === ''
+                || $params[$field] === null
+            ) {
+                throw new Registrar_Exception(
+                    'Missing required DNSSEC field: ' . $field
+                );
+            }
+        }
+
+        $domainName = $domain->getName();
+        $domainName = function_exists('idn_to_ascii')
+            ? (idn_to_ascii(
+                $domainName,
+                IDNA_DEFAULT,
+                INTL_IDNA_VARIANT_UTS46
+            ) ?: $domainName)
+            : $domainName;
+
+        $request = [
+            'domainname' => $domainName,
+            'command' => $command,
+            'keyTag_1' => (int) $params['keyTag_1'],
+            'alg_1' => (int) $params['alg_1'],
+            'digestType_1' => (int) $params['digestType_1'],
+            'digest_1' => strtoupper(trim((string) $params['digest_1'])),
+        ];
+
+        if ($command === 'addrem') {
+            $request['keyTag_2'] = (int) $params['keyTag_2'];
+            $request['alg_2'] = (int) $params['alg_2'];
+            $request['digestType_2'] = (int) $params['digestType_2'];
+            $request['digest_2'] = strtoupper(
+                trim((string) $params['digest_2'])
+            );
+        }
+
+        $epp = null;
+
+        try {
+            $epp = $this->epp_client();
+
+            if (!method_exists($epp, 'domainUpdateDNSSEC')) {
+                throw new Registrar_Exception(
+                    'The installed EPP client does not support DNSSEC updates.'
+                );
+            }
+
+            $result = $epp->domainUpdateDNSSEC($request);
+
+            if (!is_array($result)) {
+                throw new Registrar_Exception(
+                    'The registry returned an invalid DNSSEC response.'
+                );
+            }
+
+            if (!empty($result['error'])) {
+                throw new Registrar_Exception(
+                    'DNSSEC update failed: ' . (string) $result['error']
+                );
+            }
+
+            $code = (int) ($result['code'] ?? 0);
+            $message = $result['msg'] ?? 'Unknown registry response';
+
+            if (is_array($message)) {
+                $message = implode(' ', array_map(
+                    static fn ($part): string => trim((string) $part),
+                    $message
+                ));
+            }
+
+            $message = trim((string) $message);
+
+            if ($code < 1000 || $code >= 2000) {
+                throw new Registrar_Exception(
+                    sprintf(
+                        'The registry rejected the DNSSEC update (%d): %s',
+                        $code,
+                        $message !== '' ? $message : 'Unknown registry response'
+                    )
+                );
+            }
+
+            if (!empty($this->config['epp_debug_log'])) {
+                $this->getLog()->debug(
+                    'EPP domainUpdateDNSSEC ' . $domain->getName() . ': ' .
+                    json_encode(
+                        $result,
+                        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                    )
+                );
+            }
+
+            $result['code'] = $code;
+            $result['msg'] = $message !== ''
+                ? $message
+                : 'Command completed successfully';
+
+            return $result;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception(
+                'DNSSEC update failed. Please try again later.'
+            );
+        } finally {
+            if ($epp !== null) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
     public function epp_client()
     {
         $profile = $this->config['registry_profile'] ?? 'generic';
