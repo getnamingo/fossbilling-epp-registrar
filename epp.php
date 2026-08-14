@@ -804,6 +804,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 ];
 
                 $profile = $this->config['registry_profile'] ?? 'generic';
+                
+                $ptValidation = null;
+                if ($profile === 'PT') {
+                    $ptValidation = $this->getPtValidation(
+                        (string) ($client->getEmail() ?? '')
+                    );
+                }
 
                 $contactTypes = $contactTypeMap[$profile]
                     ?? $contactTypeMap['generic'];
@@ -863,6 +870,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         // PT-only extras
                         'vat' => ($profile === 'PT' && $client->getCompanyNumber())
                             ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
+                            : null,
+                        'validated' => ($profile === 'PT') ? $ptValidation['validated']
+                            : null,
+                        'validatedDate' => ($profile === 'PT') ? $ptValidation['validatedDate']
                             : null,
                         // GE-only extras
                         'nin' => ($profile === 'GE')
@@ -1156,6 +1167,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
 
         $client = $domain->getContactRegistrar();
+        $profile = $this->config['registry_profile'] ?? 'generic';
+        $ptValidation = null;
+        if ($profile === 'PT') {
+            $ptValidation = $this->getPtValidation(
+                (string) ($client->getEmail() ?? '')
+            );
+        }
         try {
             $epp = $this->epp_client();
             $domain_name = $domain->getName();
@@ -1243,6 +1261,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                             ? '+' . $cc . '.' . $tel
                             : '',
                     'email'            => $client->getEmail(),
+                    'validated' => ($profile === 'PT') ? $ptValidation['validated'] : null,
+                    'validatedDate' => ($profile === 'PT') ? $ptValidation['validatedDate'] : null,
                 ]);
 
                 if (isset($contactUpdate['error'])) {
@@ -2055,6 +2075,67 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 $this->epp_client_logout($epp);
             }
         }
+    }
+
+    private function getPtValidation(string $email): array
+    {
+        global $di;
+
+        $extensions = $di['mod_service']('extension');
+
+        $moduleActive = $extensions->isExtensionActive(
+            'mod',
+            'registrar'
+        ) || $extensions->isExtensionActive(
+            'mod',
+            'domaincontactvalidation'
+        );
+
+        if (!$moduleActive) {
+            throw new Registrar_Exception(
+                'PT contact operations require Registrar or '
+                . 'DomainContactValidation to be active.'
+            );
+        }
+
+        $email = trim($email);
+
+        $statement = $di['pdo']->prepare(
+            'SELECT id FROM client WHERE email = :email LIMIT 1'
+        );
+        $statement->execute(['email' => $email]);
+
+        $clientId = $statement->fetchColumn();
+
+        if (!$clientId) {
+            throw new Registrar_Exception(
+                'No FOSSBilling client was found for the PT contact email.'
+            );
+        }
+
+        $statement = $di['pdo']->prepare(
+            'SELECT is_validated, validation_checked_at
+             FROM domain_contact_validation
+             WHERE client_id = :client_id
+             ORDER BY validation_checked_at DESC
+             LIMIT 1'
+        );
+        $statement->execute(['client_id' => $clientId]);
+
+        $validation = $statement->fetch(\PDO::FETCH_ASSOC);
+
+        if (!$validation) {
+            throw new Registrar_Exception(
+                'No contact-validation record was found for this client.'
+            );
+        }
+
+        return [
+            'validated' => (int) $validation['is_validated'] === 1
+                ? 'true'
+                : 'false',
+            'validatedDate' => str_replace(' ', 'T', (string) $validation['validation_checked_at']) . 'Z',
+        ];
     }
 
     public function epp_client()
