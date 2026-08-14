@@ -89,6 +89,17 @@ chmod 600 cert.pem key.pem
 
 7. Add a new Top Level Domain (TLD) using your module from the "**New Top Level Domain**" tab. Make sure to configure all necessary details, such as pricing, within this tab.
 
+### DNSSEC Support
+
+The default FOSSBilling client area does not currently provide DNSSEC management.
+
+To allow customers to manage DNSSEC for their domains, install both of the following:
+
+- **[Tide](https://github.com/getnamingo/tide)** — a FOSSBilling client theme with the required domain-management interface.
+- **[DomainX](https://github.com/getnamingo/fossbilling-domainx)** — the FOSSBilling module that provides customer access to domain and DNSSEC management.
+
+Both Tide and DomainX are required to make DNSSEC management available in the client area.
+
 ### Mandatory FOSSBilling Core Changes (FOSSBilling < 0.8.4)
 
 If you are using a **FOSSBilling version earlier than 0.8.4**, the following temporary core changes may be required due to bugs in older FOSSBilling releases. These workarounds are not required on **FOSSBilling 0.8.4 or later**.
