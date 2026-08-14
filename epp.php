@@ -63,7 +63,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             // NASK
             'pl_contact_prefix' => $options['pl_contact_prefix'] ?? null,
 
-            'epp_debug_log' => !empty($options['epp_debug_log']),
+            'debug_log' => !empty($options['debug_log']),
+            'debug_log_path' => $options['debug_log_path'] ?? (__DIR__ . '/../log'),
         ];
     }
 
@@ -218,13 +219,20 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'description' => 'Optional contact ID prefix for NASK (.pl). Used when EPP profile is PL.',
                 ]],
 
-                'epp_debug_log' => ['radio', [
+                'debug_log' => ['radio', [
                     'multiOptions' => ['1' => 'Yes', '0' => 'No'],
                     'label'        => 'EPP Debug Logging',
                     'default'      => '0',
                     'description'  =>
                         'Write EPP requests and responses to the Module Log for troubleshooting. ' .
                         'Enable only while debugging, then disable.',
+                ]],
+
+                'debug_log_path' => ['text', [
+                    'label'       => 'EPP Debug Log Path',
+                    'required'    => false,
+                    'default'     => __DIR__ . '/../log',
+                    'description' => 'Absolute directory for raw EPP request and response logs.',
                 ]],
 
             ],
@@ -250,7 +258,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception((string)$info['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainInfo (transfer check) ' . $domain->getName() . ': ' .
                     json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -320,7 +328,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception((string)$domainCheck['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainCheck ' . $domain->getName() . ': ' .
                     json_encode($domainCheck, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -378,7 +386,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($info['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainInfo ' . $domain->getName() . ': ' .
                     json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -429,7 +437,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                             throw new Registrar_Exception((string)$hostCheck['error']);
                         }
 
-                        if (!empty($this->config['epp_debug_log'])) {
+                        if (!empty($this->config['debug_log'])) {
                             $this->getLog()->debug(
                                 'EPP hostCheck ' . $domain->getName() . ': ' .
                                 json_encode($hostCheck, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -459,7 +467,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                             throw new Registrar_Exception((string)$hostCreate['error']);
                         }
 
-                        if (!empty($this->config['epp_debug_log'])) {
+                        if (!empty($this->config['debug_log'])) {
                             $this->getLog()->debug(
                                 'EPP hostCreate ' . $domain->getName() . ': ' .
                                 json_encode($hostCreate, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -524,7 +532,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception((string)$domainUpdateNS['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainUpdateNS ' . $domain->getName() . ': ' .
                     json_encode($domainUpdateNS, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -566,7 +574,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception($domainInfo['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainInfo ' . $domain->getName() . ': ' .
                         json_encode($domainInfo, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -605,7 +613,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($domainTransfer['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainTransfer ' . $domain->getName() . ': ' .
                     json_encode($domainTransfer, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -644,7 +652,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception((string)$info['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainInfo ' . $domain->getName() . ': ' .
                     json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -728,7 +736,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($domainDelete['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainDelete ' . $domain->getName() . ': ' .
                     json_encode($domainDelete, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -769,7 +777,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception((string)$domainCheck['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainCheck ' . $domain->getName() . ': ' .
                     json_encode($domainCheck, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -885,7 +893,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         throw new Registrar_Exception((string)$contactCreate['error']);
                     }
                     
-                    if (!empty($this->config['epp_debug_log'])) {
+                    if (!empty($this->config['debug_log'])) {
                         $this->getLog()->debug(
                             'EPP contactCreate ' . $domain->getName() . ': ' .
                             json_encode($contactCreate, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -918,7 +926,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         throw new Registrar_Exception((string)$hostCheck['error']);
                     }
 
-                    if (!empty($this->config['epp_debug_log'])) {
+                    if (!empty($this->config['debug_log'])) {
                         $this->getLog()->debug(
                             'EPP hostCheck ' . $domain->getName() . ': ' .
                             json_encode($hostCheck, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -947,7 +955,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         throw new Registrar_Exception((string)$hostCreate['error']);
                     }
 
-                    if (!empty($this->config['epp_debug_log'])) {
+                    if (!empty($this->config['debug_log'])) {
                         $this->getLog()->debug(
                             'EPP hostCreate ' . $domain->getName() . ': ' .
                             json_encode($hostCreate, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1078,7 +1086,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception('GE privacy update failed: ' . $rawXml['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP rawXml ' . $domain->getName() . ': ' .
                         json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1086,7 +1094,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 }
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainCreate ' . $domain->getName() . ': ' .
                     json_encode($domainCreate, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1130,7 +1138,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($domainRenew['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainRenew ' . $domain->getName() . ': ' .
                     json_encode($domainRenew, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1189,7 +1197,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($info['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainInfo ' . $domain->getName() . ': ' .
                     json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1270,7 +1278,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     return;
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP contactUpdate ' . $domain->getName() . ': ' .
                         json_encode($contactUpdate, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1331,7 +1339,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception($rawXml['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP rawXml ' . $domain->getName() . ': ' .
                         json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1366,7 +1374,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception($info['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainInfo ' . $domain->getName() . ': ' .
                         json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1430,7 +1438,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         throw new Registrar_Exception($rawXml['error']);
                     }
 
-                    if (!empty($this->config['epp_debug_log'])) {
+                    if (!empty($this->config['debug_log'])) {
                         $this->getLog()->debug(
                             'EPP rawXml ' . $domain->getName() . ': ' .
                             json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1492,7 +1500,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception($rawXml['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP rawXml ' . $domain->getName() . ': ' .
                         json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1527,7 +1535,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception($info['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainInfo ' . $domain->getName() . ': ' .
                         json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1591,7 +1599,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         throw new Registrar_Exception($rawXml['error']);
                     }
 
-                    if (!empty($this->config['epp_debug_log'])) {
+                    if (!empty($this->config['debug_log'])) {
                         $this->getLog()->debug(
                             'EPP rawXml ' . $domain->getName() . ': ' .
                             json_encode($rawXml, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1637,7 +1645,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception($info['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainUpdateAuthinfo ' . $domain->getName() . ': ' .
                         json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1652,7 +1660,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception((string)$info['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainInfo ' . $domain->getName() . ': ' .
                         json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1695,7 +1703,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($info['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainInfo ' . $domain->getName() . ': ' .
                     json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1748,7 +1756,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception((string)$resp['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainUpdateStatus ' . $domain->getName() . ': ' .
                         json_encode($resp, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1789,7 +1797,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception($info['error']);
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainInfo ' . $domain->getName() . ': ' .
                     json_encode($info, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -1842,7 +1850,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     throw new Registrar_Exception((string)$resp['error']);
                 }
 
-                if (!empty($this->config['epp_debug_log'])) {
+                if (!empty($this->config['debug_log'])) {
                     $this->getLog()->debug(
                         'EPP domainUpdateStatus ' . $domain->getName() . ': ' .
                         json_encode($resp, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -2048,7 +2056,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 );
             }
 
-            if (!empty($this->config['epp_debug_log'])) {
+            if (!empty($this->config['debug_log'])) {
                 $this->getLog()->debug(
                     'EPP domainUpdateDNSSEC ' . $domain->getName() . ': ' .
                     json_encode(
@@ -2143,7 +2151,23 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         $profile = $this->config['registry_profile'] ?? 'generic';
 
         $epp = EppRegistryFactory::create($profile);
-        $epp->disableLogging();
+
+        if (!empty($this->config['debug_log'])) {
+            if (
+                !class_exists(\Monolog\Logger::class)
+                || !class_exists(\Monolog\Handler\RotatingFileHandler::class)
+                || !class_exists(\Monolog\Formatter\LineFormatter::class)
+            ) {
+                throw new Registrar_Exception(
+                    'EPP debug logging requires monolog/monolog.'
+                );
+            }
+
+            $logPath = trim((string) ($this->config['debug_log_path'] ?? ''));
+            $epp->setLogPath($logPath !== '' ? $logPath : __DIR__ . '/../log');
+        } else {
+            $epp->disableLogging();
+        }
 
         $tls_version = '1.2';
         if (!empty($this->config['tls_version'])) {
