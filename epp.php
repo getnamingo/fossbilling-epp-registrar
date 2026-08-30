@@ -43,6 +43,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             // Registry behaviour
             'registrarprefix'      => $options['registrarprefix'] ?? '',
+            'contact_postal_type'  => $options['contact_postal_type'] ?? 'int',
             'set_authinfo_on_info' => !empty($options['set_authinfo_on_info']),
             'min_data_set'         => !empty($options['min_data_set']),
             'registry_profile'     => $options['registry_profile'] ?? 'generic',
@@ -149,6 +150,17 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'label'       => 'Object ID Prefix',
                     'required'    => true,
                     'description' => 'Prefix used when generating registry object IDs (contacts/hosts). Use the value required by the registry, if any.',
+                ]],
+
+                'contact_postal_type' => ['select', [
+                    'label'        => 'Contact Postal Address Type',
+                    'required'     => true,
+                    'default'      => 'int',
+                    'multiOptions' => [
+                        'int' => 'Internationalized (int)',
+                        'loc' => 'Localized (loc)',
+                    ],
+                    'description'  => 'EPP postalInfo type used when creating contacts. Use int unless the registry specifically requires loc.',
                 ]],
 
                 'registry_profile' => ['select', [
@@ -823,9 +835,12 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 $contactTypes = $contactTypeMap[$profile]
                     ?? $contactTypeMap['generic'];
 
+                $registrarPrefix = strtoupper(trim((string)($this->config['registrarprefix'] ?? '')));
+                $contactPostalType = ($this->config['contact_postal_type'] ?? 'int') === 'loc' ? 'loc' : 'int';
+
                 foreach ($contactTypes as $i => $contactType) {
 
-                    $id = strtoupper($this->epp_random_contact_id());
+                    $id = strtoupper($this->epp_random_contact_id()) . ($registrarPrefix !== '' ? '-' . $registrarPrefix : '');
                     if ($profile === 'PL') {
                         $prefix = trim($this->config['pl_contact_prefix'] ?? '');
 
@@ -837,7 +852,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
                     $contactCreate = $epp->contactCreate([
                         'id'              => $id,
-                        'type'            => 'int',
+                        'type'            => $contactPostalType,
                         'firstname'       => $client->getFirstName() ?? '',
                         'lastname'        => $client->getLastName() ?? '',
                         'companyname'     => $client->getCompany() ?? '',
