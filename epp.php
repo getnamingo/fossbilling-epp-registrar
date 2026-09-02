@@ -47,6 +47,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             'set_authinfo_on_info' => !empty($options['set_authinfo_on_info']),
             'min_data_set'         => !empty($options['min_data_set']),
             'registry_profile'     => $options['registry_profile'] ?? 'generic',
+            'ns_mode'              => $options['ns_mode'] ?? 'hostObj',
 
             // Objects
             'login_objects' => isset($options['login_objects']) && $options['login_objects'] !== ''
@@ -183,6 +184,17 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'VRSN'    => 'VRSN',
                     ],
                     'description'  => 'Select the registry profile matching the registry implementation. List of profiles: https://github.com/getnamingo/fossbilling-epp-registrar',
+                ]],
+
+                'ns_mode' => ['select', [
+                    'label'        => 'Nameserver Mode',
+                    'required'     => true,
+                    'default'      => 'hostObj',
+                    'multiOptions' => [
+                        'hostObj'  => 'hostObj',
+                        'hostAttr' => 'hostAttr',
+                    ],
+                    'description'  => 'hostObj uses EPP host objects (default). hostAttr embeds nameservers directly in domain commands; host object creation is not used.',
                 ]],
 
                 'set_authinfo_on_info' => ['radio', [
@@ -433,7 +445,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if (!in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
+            if (($this->config['ns_mode'] ?? 'hostObj') !== 'hostAttr' && !in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 if (!empty($add)) {
                     foreach ($add as $k => $nsName) {
                         $nsName = trim((string)$nsName);
@@ -505,7 +517,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
               $final["ns$i"] = $v;
             }
 
-            if (in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
+            if (($this->config['ns_mode'] ?? 'hostObj') === 'hostAttr' || in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 $payload = [
                     'domainname' => $domain_name,
                     'nss'        => [],
@@ -921,7 +933,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if (!in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
+            if (($this->config['ns_mode'] ?? 'hostObj') !== 'hostAttr' && !in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
                     $hostname = $domain->{'get' . ucfirst($nsKey)}();
                     if (empty($hostname)) {
@@ -982,7 +994,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $period     = (int)($domain->getRegistrationPeriod() ?? 1);
             
             $nss = [];
-            if (in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
+            if (($this->config['ns_mode'] ?? 'hostObj') === 'hostAttr' || in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
                 foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
                     $host = $domain->{'get' . ucfirst($nsKey)}();
                     if (empty($host)) {
