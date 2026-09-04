@@ -66,6 +66,8 @@ This module is designed to work with both gTLD and ccTLD registries and provides
 
 ## Installation
 
+**Minimum requirement:** FOSSBilling v0.8.6 installed.
+
 1. The recommended way to install is with the automated installer:
 
 ```bash
