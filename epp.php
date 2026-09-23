@@ -1337,6 +1337,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
 
         $profile = $this->config['registry_profile'] ?? 'generic';
+        $contactPostalType = ($this->config['contact_postal_type'] ?? 'int') === 'loc'
+            ? 'loc'
+            : 'int';
+
         if ($profile === 'GE') {
             try {
                 $epp = $this->epp_client();
@@ -1447,8 +1451,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         <contact:id>'.$id.'</contact:id>
                         <contact:chg>
                           <contact:disclose flag="0">
-                            <contact:name type="int"/>
-                            <contact:addr type="int"/>
+                            <contact:name type="'.$contactPostalType.'"/>
+                            <contact:addr type="'.$contactPostalType.'"/>
                             <contact:voice/>
                             <contact:fax/>
                             <contact:email/>
@@ -1498,6 +1502,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
 
         $profile = $this->config['registry_profile'] ?? 'generic';
+        $contactPostalType = ($this->config['contact_postal_type'] ?? 'int') === 'loc'
+            ? 'loc'
+            : 'int';
+
         if ($profile === 'GE') {
             try {
                 $epp = $this->epp_client();
@@ -1608,8 +1616,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         <contact:id>'.$id.'</contact:id>
                         <contact:chg>
                           <contact:disclose flag="1">
-                            <contact:name type="int"/>
-                            <contact:addr type="int"/>
+                            <contact:name type="'.$contactPostalType.'"/>
+                            <contact:addr type="'.$contactPostalType.'"/>
                             <contact:voice/>
                             <contact:fax/>
                             <contact:email/>
