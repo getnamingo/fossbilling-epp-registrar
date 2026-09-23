@@ -1203,6 +1203,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         $client = $domain->getContactRegistrar();
         $profile = $this->config['registry_profile'] ?? 'generic';
+        $contactPostalType = ($this->config['contact_postal_type'] ?? 'int') === 'loc' ? 'loc' : 'int';
         $ptValidation = null;
         if ($profile === 'PT') {
             $ptValidation = $this->getPtValidation(
@@ -1280,7 +1281,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
                 $contactUpdate = $epp->contactUpdate([
                     'id'               => $id,
-                    'type'             => 'int',
+                    'type'             => $contactPostalType,
                     'firstname'        => $client->getFirstName(),
                     'lastname'         => $client->getLastName(),
                     'companyname'      => $client->getCompany(),
