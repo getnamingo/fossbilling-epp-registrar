@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='1.2.0'
+VERSION='1.2.1'
 ARCHIVE="fossbilling-epp-v${VERSION}.tar.gz"
 DOWNLOAD_URL="https://github.com/getnamingo/fossbilling-epp-registrar/releases/download/v${VERSION}/${ARCHIVE}"
 ARCHIVE_SHA256='fd0fe6fc1b5bfddcd4716d73d6fcf37887f1df106c15bb7e8833539d46fc773a'
