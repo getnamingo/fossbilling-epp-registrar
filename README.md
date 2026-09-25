@@ -105,6 +105,12 @@ To allow customers to manage DNSSEC for their domains, install both of the follo
 
 Both Tide and DomainX are required to make DNSSEC management available in the client area.
 
+### Glue hostname support
+
+DomainX can call this registrar's `supportsGlue`, `getGlueHost`, `createGlueHost`, `updateGlueHost`, and `deleteGlueHost` methods to manage in-bailiwick EPP host objects. The client API creates a host with one IPv4 or IPv6 address, adds/removes/replaces addresses with an update, reads its addresses, and deletes the host. A registry may reject deletion while a domain still refers to the host.
+
+Glue is available only when **Nameserver Mode** is `hostObj`; the generic profile must also include `urn:ietf:params:xml:ns:host-1.0` in **EPP Login Objects**. Profiles that use domain `hostAttr` nameservers (including EU, HR, LV, and GE) report glue as unsupported and reject direct calls without connecting to the registry. The current VRSN EPP client's host commands support `.com` only; other VRSN TLDs likewise report unsupported until those commands are updated. DomainX keeps its glue capability hidden whenever `supportsGlue` returns false.
+
 ## Upgrade
 
 Upgrade to the latest release with:

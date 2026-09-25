@@ -194,7 +194,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'hostObj'  => 'hostObj',
                         'hostAttr' => 'hostAttr',
                     ],
-                    'description'  => 'hostObj uses EPP host objects (default). hostAttr embeds nameservers directly in domain commands; host object creation is not used.',
+                    'description'  => 'hostObj uses EPP host objects (default). hostAttr embeds nameservers in domain commands and disables DomainX glue hostname management.',
                 ]],
 
                 'set_authinfo_on_info' => ['radio', [
@@ -1906,6 +1906,193 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 $this->epp_client_logout($epp);
             }
         }
+    }
+
+    /**
+     * DomainX host-object capability check. Nameservers managed as domain
+     * hostAttr values have no independent EPP host object to edit.
+     */
+    public function supportsGlue(Registrar_Domain $domain): bool
+    {
+        if (($this->config['ns_mode'] ?? 'hostObj') !== 'hostObj') {
+            return false;
+        }
+
+        $profile = strtoupper(trim((string) ($this->config['registry_profile'] ?? 'generic')));
+        if (in_array($profile, ['EE', 'EU', 'FI', 'GE', 'GR', 'HR', 'IS', 'IT', 'LT', 'LV'], true)) {
+            return false;
+        }
+
+        // The current VRSN EPP client's host commands hard-code dotCOM.
+        if ($profile === 'VRSN' && !str_ends_with(strtolower($domain->getName()), '.com')) {
+            return false;
+        }
+
+        if ($profile === 'GENERIC') {
+            return in_array(
+                'urn:ietf:params:xml:ns:host-1.0',
+                $this->config['login_objects'] ?? [],
+                true
+            );
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $params */
+    public function getGlueHost(Registrar_Domain $domain, array $params): array
+    {
+        return $this->glueCommand($domain, 'info', $params);
+    }
+
+    /** @param array<string, mixed> $params */
+    public function createGlueHost(Registrar_Domain $domain, array $params): array
+    {
+        return $this->glueCommand($domain, 'create', $params);
+    }
+
+    /** @param array<string, mixed> $params */
+    public function updateGlueHost(Registrar_Domain $domain, array $params): array
+    {
+        return $this->glueCommand($domain, 'update', $params);
+    }
+
+    /** @param array<string, mixed> $params */
+    public function deleteGlueHost(Registrar_Domain $domain, array $params): array
+    {
+        return $this->glueCommand($domain, 'delete', $params);
+    }
+
+    /**
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    private function glueCommand(Registrar_Domain $domain, string $command, array $params): array
+    {
+        if (!$this->supportsGlue($domain)) {
+            throw new Registrar_Exception('Glue host objects are not supported for this TLD.');
+        }
+
+        $methods = [
+            'info' => 'hostInfo',
+            'create' => 'hostCreate',
+            'update' => 'hostUpdate',
+            'delete' => 'hostDelete',
+        ];
+        if (!isset($methods[$command])) {
+            throw new Registrar_Exception('Unsupported glue operation.');
+        }
+
+        $request = ['hostname' => $this->glueHostname($domain, $params['hostname'] ?? null)];
+        if ($command === 'create') {
+            $request['ipaddress'] = $this->glueIpAddress($params['ipaddress'] ?? null);
+        } elseif ($command === 'update') {
+            if (isset($params['currentipaddress']) && $params['currentipaddress'] !== '') {
+                $request['currentipaddress'] = $this->glueIpAddress($params['currentipaddress']);
+            }
+            if (isset($params['newipaddress']) && $params['newipaddress'] !== '') {
+                $request['newipaddress'] = $this->glueIpAddress($params['newipaddress']);
+            }
+            if (!isset($request['currentipaddress']) && !isset($request['newipaddress'])) {
+                throw new Registrar_Exception('An IP address to add or remove is required.');
+            }
+        }
+
+        $method = $methods[$command];
+        $epp = null;
+
+        try {
+            $epp = $this->epp_client();
+            if (!is_callable([$epp, $method])) {
+                throw new Registrar_Exception('The installed EPP client does not support glue host objects.');
+            }
+
+            $result = $epp->{$method}($request);
+            if (!is_array($result)) {
+                throw new Registrar_Exception('The registry returned an invalid glue response.');
+            }
+            if (!empty($result['error'])) {
+                throw new Registrar_Exception('Glue operation failed: ' . (string) $result['error']);
+            }
+
+            $code = (int) ($result['code'] ?? 0);
+            $message = $result['msg'] ?? 'Unknown registry response';
+            if (is_array($message)) {
+                $message = implode(' ', array_map(
+                    static fn ($part): string => trim((string) $part),
+                    $message
+                ));
+            }
+            $message = trim((string) $message);
+
+            if ($code < 1000 || $code >= 2000) {
+                throw new Registrar_Exception(sprintf(
+                    'The registry rejected the glue operation (%d): %s',
+                    $code,
+                    $message !== '' ? $message : 'Unknown registry response'
+                ));
+            }
+
+            if ($command === 'info' && !is_array($result['addr'] ?? null)) {
+                throw new Registrar_Exception('The registry returned invalid glue address data.');
+            }
+
+            if (!empty($this->config['debug_log'])) {
+                $this->getLog()->debug(
+                    'EPP ' . $method . ' ' . $request['hostname'] . ': ' .
+                    json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                );
+            }
+
+            $result['code'] = $code;
+            $result['msg'] = $message !== '' ? $message : 'Command completed successfully';
+
+            return $result;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception('Glue operation failed. Please try again later.');
+        } finally {
+            if ($epp !== null) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
+    private function glueHostname(Registrar_Domain $domain, $value): string
+    {
+        if (!is_string($value) || trim($value) === '') {
+            throw new Registrar_Exception('Glue hostname is required.');
+        }
+
+        $hostname = strtolower(rtrim(trim($value), '.'));
+        $domainName = strtolower(rtrim($domain->getName(), '.'));
+        if (function_exists('idn_to_ascii')) {
+            $hostname = idn_to_ascii($hostname, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: '';
+            $domainName = idn_to_ascii($domainName, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: '';
+        }
+        $hostname = strtolower($hostname);
+        $domainName = strtolower($domainName);
+
+        if (strlen($hostname) > 253 || !str_ends_with($hostname, '.' . $domainName)) {
+            throw new Registrar_Exception('Glue hostname must be within this domain.');
+        }
+        foreach (explode('.', $hostname) as $label) {
+            if (strlen($label) > 63 || !preg_match('/\A[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\z/', $label)) {
+                throw new Registrar_Exception('Glue hostname is invalid.');
+            }
+        }
+
+        return $hostname;
+    }
+
+    private function glueIpAddress($value): string
+    {
+        if (!is_string($value) || filter_var($value, FILTER_VALIDATE_IP) === false) {
+            throw new Registrar_Exception('A valid IPv4 or IPv6 address is required.');
+        }
+
+        return strtolower($value);
     }
 
     public function getDNSSEC(Registrar_Domain $domain): array
