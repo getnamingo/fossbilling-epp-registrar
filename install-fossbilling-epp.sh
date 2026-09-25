@@ -6,7 +6,6 @@ VERSION='1.2.1'
 ARCHIVE="fossbilling-epp-v${VERSION}.tar.gz"
 DOWNLOAD_URL="https://github.com/getnamingo/fossbilling-epp-registrar/releases/download/v${VERSION}/${ARCHIVE}"
 ARCHIVE_SHA256='7ea35ecb1875c2a53b31f919528e2a91e57d8053dcab432f5d6b3357fd549625'
-CERT_DIR='/var/www'
 
 CC_REGISTRIES=(
   registrebf switch niccl cocca cocca2 eurid afnic nicge carnet nicim switchli
@@ -94,23 +93,6 @@ prompt_fossbilling_root() {
     fi
 
     printf 'Not a valid FOSSBilling root: %s (expected di.php and library/Registrar/Adapter)\n' "$path" >&2
-  done
-}
-
-ask_yes_no() {
-  local prompt=$1 answer
-
-  if [[ ! -r /dev/tty ]]; then
-    return 1
-  fi
-
-  while true; do
-    read -r -p "$prompt [y/N]: " answer </dev/tty
-    case "${answer,,}" in
-      y|yes) return 0 ;;
-      ''|n|no) return 1 ;;
-      *) printf 'Please answer yes or no.\n' >&2 ;;
-    esac
   done
 }
 
@@ -237,16 +219,19 @@ else
   info "Added cron job for user $(id -un): $cron_line"
 fi
 
-cert_path="$CERT_DIR/${registry}_cert.pem"
-key_path="$CERT_DIR/${registry}_key.pem"
+ssl_dir="$foss_path/ssl"
+cert_path="$ssl_dir/${registry}_cert.pem"
+key_path="$ssl_dir/${registry}_key.pem"
 cert_generated='no'
 
-if ask_yes_no "Generate a self-signed TEST EPP certificate for ${registry_class}?"; then
-  need_cmd openssl
+"${SUDO[@]}" install -d -o www-data -g www-data -m 0700 -- "$ssl_dir"
 
-  if [[ -e "$cert_path" || -e "$key_path" ]]; then
-    die "Refusing to overwrite an existing test certificate/key: $cert_path or $key_path"
-  fi
+if [[ -e "$cert_path" || -e "$key_path" ]]; then
+  [[ -f "$cert_path" && -f "$key_path" ]] \
+    || die "Incomplete existing test certificate pair in $ssl_dir"
+  info "Existing EPP certificate/key found, keeping them."
+else
+  need_cmd openssl
 
   cert_tmp="$workdir/${registry}_cert.pem"
   key_tmp="$workdir/${registry}_key.pem"
