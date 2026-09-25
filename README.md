@@ -94,22 +94,18 @@ bash <(wget -qO- https://namingo.org/install-fossbilling-epp.sh) namingo /var/ww
 
 5. Add a new Top Level Domain (TLD) using your module from the "**New Top Level Domain**" tab. Make sure to configure all necessary details, such as pricing, within this tab.
 
-### DNSSEC Support
+### DNSSEC and Glue Support
 
-The default FOSSBilling client area does not currently provide DNSSEC management.
+The default FOSSBilling client area does not currently provide DNSSEC or glue hostname management.
 
-To allow customers to manage DNSSEC for their domains, install both of the following:
+To allow customers to manage DNSSEC and glue hostnames for their domains, install both of the following:
 
 - **[Tide](https://github.com/getnamingo/tide)** — a FOSSBilling client theme with the required domain-management interface.
-- **[DomainX](https://github.com/getnamingo/fossbilling-domainx)** — the FOSSBilling module that provides customer access to domain and DNSSEC management.
+- **[DomainX](https://github.com/getnamingo/fossbilling-domainx)** — the FOSSBilling module that provides customer access to domain, DNSSEC, and glue hostname management.
 
-Both Tide and DomainX are required to make DNSSEC management available in the client area.
+Both Tide and DomainX are required to make DNSSEC and glue management available in the client area.
 
-### Glue hostname support
-
-DomainX can call this registrar's `supportsGlue`, `getGlueHost`, `createGlueHost`, `updateGlueHost`, and `deleteGlueHost` methods to manage in-bailiwick EPP host objects. The client API creates a host with one IPv4 or IPv6 address, adds/removes/replaces addresses with an update, reads its addresses, and deletes the host. A registry may reject deletion while a domain still refers to the host.
-
-Glue is available only when **Nameserver Mode** is `hostObj`; the generic profile must also include `urn:ietf:params:xml:ns:host-1.0` in **EPP Login Objects**. Profiles that use domain `hostAttr` nameservers (including EU, HR, LV, and GE) report glue as unsupported and reject direct calls without connecting to the registry. The current VRSN EPP client's host commands support `.com` only; other VRSN TLDs likewise report unsupported until those commands are updated. DomainX keeps its glue capability hidden whenever `supportsGlue` returns false.
+Glue hostname management is available only when **Nameserver Mode** is set to `hostObj` and the TLD/registry supports EPP host objects.
 
 ## Upgrade
 

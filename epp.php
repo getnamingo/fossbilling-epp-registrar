@@ -1918,17 +1918,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             return false;
         }
 
-        $profile = strtoupper(trim((string) ($this->config['registry_profile'] ?? 'generic')));
+        $profile = trim((string) ($this->config['registry_profile'] ?? 'generic'));
+
         if (in_array($profile, ['EE', 'EU', 'FI', 'GE', 'GR', 'HR', 'IS', 'IT', 'LT', 'LV'], true)) {
             return false;
         }
 
-        // The current VRSN EPP client's host commands hard-code dotCOM.
-        if ($profile === 'VRSN' && !str_ends_with(strtolower($domain->getName()), '.com')) {
-            return false;
-        }
-
-        if ($profile === 'GENERIC') {
+        if ($profile === 'generic') {
             return in_array(
                 'urn:ietf:params:xml:ns:host-1.0',
                 $this->config['login_objects'] ?? [],
