@@ -179,6 +179,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'PL'      => 'PL',
                         'PT'      => 'PT',
                         'SE'      => 'SE',
+                        'SI'      => 'SI',
                         'SWITCH'  => 'SWITCH',
                         'UA'      => 'UA',
                         'VRSN'    => 'VRSN',
@@ -899,9 +900,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'nin' => ($profile === 'HR')
                             ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
                             : null,
-                        'nin_type' => ($profile === 'HR')
-                            ? ($client->getCompanyNumber() ? 'company' : 'personal')
-                            : null,
+                        'nin_type' => ($profile === 'SI')
+                            ? (trim((string)($client->getCompany() ?? '')) !== '' ? 'org' : 'person')
+                            : (($profile === 'HR')
+                                ? ($client->getCompanyNumber() ? 'company' : 'personal')
+                                : null),
                         // PT-only extras
                         'vat' => ($profile === 'PT' && $client->getCompanyNumber())
                             ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
