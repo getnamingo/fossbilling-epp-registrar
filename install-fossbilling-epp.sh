@@ -5,7 +5,7 @@ IFS=$'\n\t'
 VERSION='1.2.3'
 ARCHIVE="fossbilling-epp-v${VERSION}.tar.gz"
 DOWNLOAD_URL="https://github.com/getnamingo/fossbilling-epp-registrar/releases/download/v${VERSION}/${ARCHIVE}"
-ARCHIVE_SHA256='f0f00dbb3aaaa25a90852352ae4106dd3d7b215a4e694582547fabfd99651ed3'
+ARCHIVE_SHA256='c0979886775a98070af8f25bcf65582aa6eebc48104d9d9cd36cde858693146c'
 
 CC_REGISTRIES=(
   registrebf switch niccl cocca cocca2 eurid afnic nicge carnet nicim switchli
