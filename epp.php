@@ -366,16 +366,19 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 throw new Registrar_Exception('Domain check failed: empty response');
             }
 
+            if (!array_key_exists('avail', $item)) {
+                throw new Registrar_Exception(
+                    'Domain check failed: missing availability status'
+                );
+            }
+
             $avail = filter_var($item['avail'] ?? false, FILTER_VALIDATE_BOOL);
-            $reason = (string)($item['reason'] ?? '');
 
             if ($avail) {
                 return true;
             }
 
-            throw new Registrar_Exception(
-                'Domain is not available' . ($reason ? ': ' . $reason : ''), null, 1000
-            );
+            return false;
         } catch (Registrar_Exception  $e) {
             throw $e;
         } catch (\Throwable $e) {
