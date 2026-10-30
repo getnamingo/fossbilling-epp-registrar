@@ -197,6 +197,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         'generic' => 'generic',
                         'EU'      => 'EU',
                         'FR'      => 'FR',
+                        'FRED'    => 'FRED',
                         'GE'      => 'GE',
                         'HR'      => 'HR',
                         'LV'      => 'LV',
@@ -449,6 +450,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
     public function modifyNs(Registrar_Domain $domain)
     {
+        if (($this->config['registry_profile'] ?? 'generic') === 'FRED') {
+            return $this->fredModifyNs($domain);
+        }
+
         $this->getLog()->debug('Modifying nameservers: ' . $domain->getName());
         $this->getLog()->debug('Ns1: ' . $domain->getNs1());
         $this->getLog()->debug('Ns2: ' . $domain->getNs2());
@@ -922,6 +927,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'PL'=> ['registrant'],
                     'GE'=> ['registrant'],
                     'RO'=> ['registrant'],
+                    'FRED'=> ['registrant'], // the same contact is also used as nsset tech contact
                     'generic'=> ['registrant', 'admin', 'tech', 'billing'],
                     'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
                 ];
@@ -1033,7 +1039,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $profile = $this->config['registry_profile'] ?? 'generic';
-            if (($this->config['ns_mode'] ?? 'hostObj') !== 'hostAttr' && !in_array($profile, ['EU', 'HR', 'LV', 'GE'], true)) {
+            if ($profile === 'FRED' && !empty($this->config['min_data_set'])) {
+                throw new Registrar_Exception('FRED requires a registrant contact. Disable "Minimum Data Set" for this registrar.');
+            }
+            // FRED has no host objects: nameservers are grouped in an nsset created further below.
+            if (($this->config['ns_mode'] ?? 'hostObj') !== 'hostAttr' && !in_array($profile, ['EU', 'HR', 'LV', 'GE', 'FRED'], true)) {
                 foreach (['ns1','ns2','ns3','ns4'] as $nsKey) {
                     $hostname = $domain->{'get' . ucfirst($nsKey)}();
                     if (empty($hostname)) {
@@ -1138,12 +1148,66 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             $authInfoPw = $this->epp_random_auth_pw();
 
+            $fredNsid = null;
+            if ($profile === 'FRED') {
+                $nss = array_values(array_filter(array_map(
+                    static fn($n) => is_array($n) ? ($n['hostName'] ?? '') : $n,
+                    $nss
+                )));
+
+                if (count($nss) < 2) {
+                    throw new Registrar_Exception('FRED requires at least two nameservers.');
+                }
+
+                if (empty($contacts[1])) {
+                    throw new Registrar_Exception('FRED requires a registrant contact. Disable "Minimum Data Set" for this registrar.');
+                }
+
+                // Glue IP addresses are only needed for nameservers inside the registered domain.
+                $fredGlue = static function (string $host, string $domainName): string {
+                    if (!preg_match('/(^|\.)' . preg_quote($domainName, '/') . '$/i', $host)) {
+                        return '';
+                    }
+                    $a = @dns_get_record($host, DNS_A);
+                    return $a[0]['ip'] ?? '';
+                };
+
+                $fredPrefix = strtoupper(trim((string)($this->config['registrarprefix'] ?? '')));
+                $fredNsid = 'NSID-' . strtoupper($this->epp_random_contact_id()) . ($fredPrefix !== '' ? '-' . $fredPrefix : '');
+
+                // Only the first two nameservers are sent: FredEpp::hostCreate builds a two-server nsset.
+                $nsCreate = $epp->hostCreate([
+                    'hostname'   => $nss[0],
+                    'ipaddress'  => $fredGlue($nss[0], $domain_name),
+                    'hostname2'  => $nss[1],
+                    'ipaddress2' => $fredGlue($nss[1], $domain_name),
+                    'nsid'       => $fredNsid,
+                    'nstech'     => $contacts[1],
+                ]);
+
+                if (!empty($nsCreate['error'])) {
+                    throw new Registrar_Exception((string)$nsCreate['error']);
+                }
+
+                if (!empty($this->config['debug_log'])) {
+                    $this->getLog()->debug(
+                        'EPP nssetCreate ' . $domain->getName() . ': ' .
+                        json_encode($nsCreate, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                    );
+                }
+            }
+
             $payload = [
                 'domainname' => $domain_name,
                 'period'     => $period,
                 'nss'        => $nss,
                 'authInfoPw' => $authInfoPw,
             ];
+
+            if ($profile === 'FRED') {
+                $payload['nsid']  = $fredNsid;
+                $payload['admin'] = '';
+            }
 
             if (empty($this->config['min_data_set'])) {
                 $payload['registrant'] = $contacts[1] ?? null;
@@ -2017,6 +2081,11 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
      */
     public function supportsGlue(Registrar_Domain $domain): bool
     {
+        // FRED has no host objects: glue addresses are stored with the nameserver inside the nsset.
+        if (($this->config['registry_profile'] ?? 'generic') === 'FRED') {
+            return true;
+        }
+
         if (($this->config['ns_mode'] ?? 'hostObj') !== 'hostObj') {
             return false;
         }
@@ -2070,6 +2139,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     {
         if (!$this->supportsGlue($domain)) {
             throw new Registrar_Exception('Glue host objects are not supported for this TLD.');
+        }
+
+        if (($this->config['registry_profile'] ?? 'generic') === 'FRED') {
+            return $this->fredGlueCommand($domain, $command, $params);
         }
 
         $methods = [
@@ -2158,6 +2231,327 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
     }
 
+    // ---------------------------------------------------------------------
+    // FRED (CZ.NIC): nameservers and their glue addresses live in nsset objects.
+    // A change creates a new nsset, points the domain at it and removes the old one.
+    // ---------------------------------------------------------------------
+
+    private const FRED_NSSET_NS  = 'http://www.nic.cz/xml/epp/nsset-1.2';
+    private const FRED_DOMAIN_NS = 'http://www.nic.cz/xml/epp/domain-1.4';
+
+    private function fredIdn(string $name): string
+    {
+        $name = strtolower(rtrim(trim($name), '.'));
+
+        return function_exists('idn_to_ascii')
+            ? strtolower(idn_to_ascii($name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $name)
+            : $name;
+    }
+
+    /** Sends one command wrapped in <command>; throws on registry errors. */
+    private function fredRaw($epp, string $body, string $what): \SimpleXMLElement
+    {
+        $xml = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>'
+            . '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+            . ' xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd"><command>' . $body
+            . '<clTRID>' . htmlspecialchars('fred-' . $what . '-' . str_replace('.', '', (string) round(microtime(true), 3)))
+            . '</clTRID></command></epp>';
+
+        $r = $epp->rawXml(['xml' => $xml]);
+
+        if (!empty($r['error'])) {
+            throw new Registrar_Exception(ucfirst(str_replace('-', ' ', $what)) . ' failed: ' . (string) $r['error']);
+        }
+
+        $parsed = simplexml_load_string((string) ($r['xml'] ?? ''));
+        if ($parsed === false) {
+            throw new Registrar_Exception('The registry returned an invalid response.');
+        }
+
+        return $parsed;
+    }
+
+    /** @return array{ns: array<string, list<string>>, tech: list<string>, reportlevel: int} */
+    private function fredNssetInfo($epp, string $nsid): array
+    {
+        $r = $this->fredRaw(
+            $epp,
+            '<info><nsset:info xmlns:nsset="' . self::FRED_NSSET_NS . '" xsi:schemaLocation="' . self::FRED_NSSET_NS
+            . ' nsset-1.2.2.xsd"><nsset:id>' . htmlspecialchars($nsid) . '</nsset:id></nsset:info></info>',
+            'nsset-info'
+        );
+
+        $inf = $r->response->resData->children(self::FRED_NSSET_NS)->infData;
+
+        $ns = [];
+        foreach ($inf->ns as $n) {
+            $name = strtolower((string) $n->name);
+            $ns[$name] = [];
+            foreach ($n->addr as $a) {
+                $ns[$name][] = strtolower(trim((string) $a));
+            }
+        }
+
+        $tech = [];
+        foreach ($inf->tech as $t) {
+            $tech[] = (string) $t;
+        }
+
+        return ['ns' => $ns, 'tech' => $tech, 'reportlevel' => (int) ($inf->reportlevel ?? 0)];
+    }
+
+    /** @param array<string, list<string>> $ns @param list<string> $tech */
+    private function fredNssetCreate($epp, string $nsid, array $ns, array $tech, int $reportlevel): void
+    {
+        $nsXml = '';
+        foreach ($ns as $name => $ips) {
+            $nsXml .= '<nsset:ns><nsset:name>' . htmlspecialchars((string) $name) . '</nsset:name>';
+            foreach ($ips as $ip) {
+                $nsXml .= '<nsset:addr>' . htmlspecialchars($ip) . '</nsset:addr>';
+            }
+            $nsXml .= '</nsset:ns>';
+        }
+
+        $techXml = '';
+        foreach ($tech as $t) {
+            $techXml .= '<nsset:tech>' . htmlspecialchars($t) . '</nsset:tech>';
+        }
+
+        $this->fredRaw(
+            $epp,
+            '<create><nsset:create xmlns:nsset="' . self::FRED_NSSET_NS . '" xsi:schemaLocation="' . self::FRED_NSSET_NS
+            . ' nsset-1.2.2.xsd"><nsset:id>' . htmlspecialchars($nsid) . '</nsset:id>' . $nsXml . $techXml
+            . '<nsset:reportlevel>' . $reportlevel . '</nsset:reportlevel></nsset:create></create>',
+            'nsset-create'
+        );
+    }
+
+    private function fredNssetDelete($epp, string $nsid): void
+    {
+        $this->fredRaw(
+            $epp,
+            '<delete><nsset:delete xmlns:nsset="' . self::FRED_NSSET_NS . '" xsi:schemaLocation="' . self::FRED_NSSET_NS
+            . ' nsset-1.2.2.xsd"><nsset:id>' . htmlspecialchars($nsid) . '</nsset:id></nsset:delete></delete>',
+            'nsset-delete'
+        );
+    }
+
+    private function fredCurrentNssetId($epp, string $domainName): string
+    {
+        $info = $epp->domainInfo(['domainname' => $domainName]);
+
+        if (!empty($info['error'])) {
+            throw new Registrar_Exception((string) $info['error']);
+        }
+
+        $id = (string) (array_values($info['ns'] ?? [])[0] ?? '');
+        if ($id === '') {
+            throw new Registrar_Exception('This domain has no nsset in the registry.');
+        }
+
+        return $id;
+    }
+
+    /**
+     * Applies $mutate to the domain's nameserver map (name => glue IPs) by creating a new nsset
+     * and switching the domain to it. The previous nsset is removed when nothing else uses it.
+     *
+     * @param callable(array<string, list<string>>): array<string, list<string>> $mutate
+     * @return array<string, list<string>>
+     */
+    private function fredReplaceNsset(Registrar_Domain $domain, callable $mutate): array
+    {
+        $epp = null;
+
+        try {
+            $epp = $this->epp_client();
+            $domainName = $this->fredIdn($domain->getName());
+
+            $oldId = $this->fredCurrentNssetId($epp, $domainName);
+            $cur = $this->fredNssetInfo($epp, $oldId);
+            // FRED unlinks the keyset whenever the nsset changes, unless the update names it again.
+            $keysetId = $this->fredDomainLinks($epp, $domainName)['keyset'];
+
+            $new = $mutate($cur['ns']);
+
+            if (count($new) < 2) {
+                throw new Registrar_Exception('FRED requires at least two nameservers.');
+            }
+            if (count($new) > 10) {
+                throw new Registrar_Exception('FRED allows at most ten nameservers.');
+            }
+
+            $norm = static function (array $m): string {
+                ksort($m);
+                foreach ($m as &$ips) {
+                    sort($ips);
+                }
+                return json_encode($m);
+            };
+            if ($norm($new) === $norm($cur['ns'])) {
+                return $new;
+            }
+
+            $prefix = strtoupper(trim((string) ($this->config['registrarprefix'] ?? '')));
+            $newId = 'NSID-' . strtoupper($this->epp_random_contact_id()) . ($prefix !== '' ? '-' . $prefix : '');
+
+            $this->fredNssetCreate($epp, $newId, $new, $cur['tech'], $cur['reportlevel']);
+
+            try {
+                $this->fredRaw(
+                    $epp,
+                    '<update><domain:update xmlns:domain="' . self::FRED_DOMAIN_NS . '" xsi:schemaLocation="'
+                    . self::FRED_DOMAIN_NS . ' domain-1.4.2.xsd"><domain:name>' . htmlspecialchars($domainName)
+                    . '</domain:name><domain:chg><domain:nsset>' . htmlspecialchars($newId) . '</domain:nsset>'
+                    . ($keysetId !== '' ? '<domain:keyset>' . htmlspecialchars($keysetId) . '</domain:keyset>' : '')
+                    . '</domain:chg></domain:update></update>',
+                    'domain-update-nsset'
+                );
+            } catch (\Throwable $e) {
+                // Do not leave the unused nsset behind.
+                try {
+                    $this->fredNssetDelete($epp, $newId);
+                } catch (\Throwable $ignored) {
+                }
+                throw $e;
+            }
+
+            // Best effort: fails harmlessly while other domains still use the old nsset.
+            try {
+                $this->fredNssetDelete($epp, $oldId);
+            } catch (\Throwable $ignored) {
+            }
+
+            if (!empty($this->config['debug_log'])) {
+                $this->getLog()->debug(
+                    'EPP FRED nsset ' . $oldId . ' -> ' . $newId . ' for ' . $domain->getName() . ': '
+                    . json_encode($new, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                );
+            }
+
+            return $new;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception('Nameserver update failed. Please try again later.');
+        } finally {
+            if ($epp !== null) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
+    private function fredModifyNs(Registrar_Domain $domain): bool
+    {
+        $desired = [];
+        foreach (['ns1', 'ns2', 'ns3', 'ns4'] as $key) {
+            $host = $domain->{'get' . ucfirst($key)}();
+            if (!empty($host)) {
+                $desired[] = $this->fredIdn((string) $host);
+            }
+        }
+        $desired = array_values(array_unique($desired));
+
+        $domainName = $this->fredIdn($domain->getName());
+
+        $this->fredReplaceNsset($domain, function (array $current) use ($desired, $domainName): array {
+            $new = [];
+            foreach ($desired as $host) {
+                if (isset($current[$host])) {
+                    $new[$host] = $current[$host]; // keep the glue addresses already registered
+                    continue;
+                }
+
+                // A nameserver inside the domain itself needs an address; try DNS if none is known.
+                $ips = [];
+                if (preg_match('/(^|\.)' . preg_quote($domainName, '/') . '$/', $host)) {
+                    foreach ((@dns_get_record($host, DNS_A) ?: []) as $rec) {
+                        if (!empty($rec['ip'])) {
+                            $ips[] = $rec['ip'];
+                        }
+                    }
+                }
+                $new[$host] = $ips;
+            }
+
+            return $new;
+        });
+
+        return true;
+    }
+
+    /**
+     * Glue for FRED: the addresses of a nameserver stored in the domain's nsset.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    private function fredGlueCommand(Registrar_Domain $domain, string $command, array $params): array
+    {
+        $hostname = $this->glueHostname($domain, $params['hostname'] ?? null);
+        $ok = ['code' => 1000, 'msg' => 'Command completed successfully'];
+
+        if ($command === 'info') {
+            $epp = null;
+
+            try {
+                $epp = $this->epp_client();
+                $nsid = $this->fredCurrentNssetId($epp, $this->fredIdn($domain->getName()));
+                $cur = $this->fredNssetInfo($epp, $nsid);
+
+                return $ok + ['addr' => array_values($cur['ns'][$hostname] ?? [])];
+            } catch (Registrar_Exception $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+                throw new Registrar_Exception('Glue lookup failed. Please try again later.');
+            } finally {
+                if ($epp !== null) {
+                    $this->epp_client_logout($epp);
+                }
+            }
+        }
+
+        $this->fredReplaceNsset($domain, function (array $ns) use ($command, $hostname, $params): array {
+            if (!isset($ns[$hostname])) {
+                // FRED needs the address at the moment a nameserver inside the domain is added, so
+                // creating glue for a host that is not yet a nameserver adds it as one.
+                if ($command !== 'create') {
+                    throw new Registrar_Exception(
+                        'FRED stores glue addresses with the nameserver. ' . $hostname . ' is not a nameserver of this domain.'
+                    );
+                }
+                $ns[$hostname] = [];
+            }
+
+            switch ($command) {
+                case 'create':
+                    $ns[$hostname][] = $this->glueIpAddress($params['ipaddress'] ?? null);
+                    break;
+                case 'update':
+                    if (!empty($params['currentipaddress'])) {
+                        $remove = $this->glueIpAddress($params['currentipaddress']);
+                        $ns[$hostname] = array_values(array_filter(
+                            $ns[$hostname],
+                            static fn(string $ip): bool => $ip !== $remove
+                        ));
+                    }
+                    if (!empty($params['newipaddress'])) {
+                        $ns[$hostname][] = $this->glueIpAddress($params['newipaddress']);
+                    }
+                    break;
+                case 'delete':
+                    $ns[$hostname] = [];
+                    break;
+            }
+
+            $ns[$hostname] = array_values(array_unique($ns[$hostname]));
+
+            return $ns;
+        });
+
+        return $ok;
+    }
+
     private function glueHostname(Registrar_Domain $domain, $value): string
     {
         if (!is_string($value) || trim($value) === '') {
@@ -2194,8 +2588,468 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         return strtolower($value);
     }
 
+    // ---------------------------------------------------------------------
+    // FRED DNSSEC. FRED stores DNSKEYs in keyset objects, not DS records. DomainX collects DS
+    // values, so for an "add" the DNSKEY that produces the given DS is looked up on the domain's own
+    // nameservers and verified against the DS before the keyset is written. The zone must already
+    // be signed and served by those nameservers. DS shown to the customer are derived (SHA-256).
+    // ---------------------------------------------------------------------
+
+    private const FRED_KEYSET_NS = 'http://www.nic.cz/xml/epp/keyset-1.3';
+    private const FRED_DS_DIGESTS = [1 => 'sha1', 2 => 'sha256', 4 => 'sha384'];
+
+    private static function fredWireName(string $name): string
+    {
+        $out = '';
+        foreach (explode('.', strtolower(rtrim($name, '.'))) as $label) {
+            if ($label !== '') {
+                $out .= chr(strlen($label)) . $label;
+            }
+        }
+
+        return $out . "\0";
+    }
+
+    /** @param array{flags:int,protocol:int,alg:int,pubKey:string} $key */
+    private static function fredDnskeyRdata(array $key): string
+    {
+        return pack('nCC', $key['flags'], $key['protocol'], $key['alg'])
+            . (string) base64_decode(preg_replace('/\s+/', '', $key['pubKey']), true);
+    }
+
+    /** RFC 4034 appendix B key tag. */
+    private static function fredKeyTag(string $rdata): int
+    {
+        $sum = 0;
+        for ($i = 0, $n = strlen($rdata); $i < $n; $i++) {
+            $sum += ($i & 1) ? ord($rdata[$i]) : (ord($rdata[$i]) << 8);
+        }
+        $sum += ($sum >> 16) & 0xFFFF;
+
+        return $sum & 0xFFFF;
+    }
+
+    /**
+     * DS record that a DNSKEY produces (RFC 4034 section 5.1.4).
+     *
+     * @param array{flags:int,protocol:int,alg:int,pubKey:string} $key
+     * @return array{key_tag:int,algorithm:int,digest_type:int,digest:string}|null
+     */
+    private function fredDnskeyToDs(string $domainName, array $key, int $digestType): ?array
+    {
+        if (!isset(self::FRED_DS_DIGESTS[$digestType])) {
+            return null;
+        }
+
+        $rdata = self::fredDnskeyRdata($key);
+
+        return [
+            'key_tag' => self::fredKeyTag($rdata),
+            'algorithm' => $key['alg'],
+            'digest_type' => $digestType,
+            'digest' => strtoupper(hash(self::FRED_DS_DIGESTS[$digestType], self::fredWireName($domainName) . $rdata)),
+        ];
+    }
+
+    private static function fredKeyId(array $key): string
+    {
+        return $key['flags'] . '|' . $key['protocol'] . '|' . $key['alg'] . '|' . preg_replace('/\s+/', '', $key['pubKey']);
+    }
+
+    /** @return list<array{flags:int,protocol:int,alg:int,pubKey:string}> DNSKEYs from a DNS response. */
+    private function fredParseDnskeyResponse(string $resp): array
+    {
+        if (strlen($resp) < 12) {
+            return [];
+        }
+
+        $h = unpack('nid/nflags/nqd/nan', $resp);
+        if (($h['flags'] & 0x000F) !== 0) {
+            return [];
+        }
+
+        $skipName = static function (string $m, int $pos): int {
+            while ($pos < strlen($m)) {
+                $len = ord($m[$pos]);
+                if ($len === 0) {
+                    return $pos + 1;
+                }
+                if (($len & 0xC0) === 0xC0) {
+                    return $pos + 2;
+                }
+                $pos += $len + 1;
+            }
+
+            return $pos;
+        };
+
+        $pos = 12;
+        for ($i = 0; $i < $h['qd']; $i++) {
+            $pos = $skipName($resp, $pos) + 4;
+        }
+
+        $keys = [];
+        for ($i = 0; $i < $h['an'] && $pos < strlen($resp); $i++) {
+            $pos = $skipName($resp, $pos);
+            if ($pos + 10 > strlen($resp)) {
+                break;
+            }
+            $rr = unpack('ntype/nclass/Nttl/nlen', substr($resp, $pos, 10));
+            $pos += 10;
+            $rdata = substr($resp, $pos, $rr['len']);
+            $pos += $rr['len'];
+
+            if ($rr['type'] === 48 && strlen($rdata) > 4) {
+                $f = unpack('nflags/Cprotocol/Calg', $rdata);
+                $keys[] = [
+                    'flags' => $f['flags'],
+                    'protocol' => $f['protocol'],
+                    'alg' => $f['alg'],
+                    'pubKey' => base64_encode(substr($rdata, 4)),
+                ];
+            }
+        }
+
+        return $keys;
+    }
+
+    private static function fredReadExact($fp, int $len): string
+    {
+        $buf = '';
+        while (strlen($buf) < $len) {
+            $chunk = fread($fp, $len - strlen($buf));
+            if ($chunk === false || $chunk === '') {
+                return '';
+            }
+            $buf .= $chunk;
+        }
+
+        return $buf;
+    }
+
+    /**
+     * Asks the domain's own nameservers for its DNSKEY set (TCP, so large answers fit).
+     *
+     * @param array<string, list<string>> $nsMap nameserver => glue addresses
+     * @return list<array{flags:int,protocol:int,alg:int,pubKey:string}>
+     */
+    protected function fredFetchDnskeys(string $domainName, array $nsMap): array
+    {
+        $servers = [];
+        foreach ($nsMap as $name => $ips) {
+            foreach ($ips as $ip) {
+                $servers[$ip] = true;
+            }
+            foreach (@dns_get_record((string) $name, DNS_A | DNS_AAAA) ?: [] as $rec) {
+                $ip = $rec['ip'] ?? $rec['ipv6'] ?? null;
+                if ($ip) {
+                    $servers[$ip] = true;
+                }
+            }
+        }
+
+        $query = pack('nnnnnn', random_int(0, 65535), 0x0100, 1, 0, 0, 0)
+            . self::fredWireName($domainName) . pack('nn', 48, 1);
+
+        foreach (array_keys($servers) as $ip) {
+            $host = str_contains($ip, ':') ? '[' . $ip . ']' : $ip;
+            $fp = @stream_socket_client('tcp://' . $host . ':53', $errno, $errstr, 4);
+            if (!$fp) {
+                continue;
+            }
+            stream_set_timeout($fp, 4);
+            fwrite($fp, pack('n', strlen($query)) . $query);
+            $lenBytes = self::fredReadExact($fp, 2);
+            $resp = $lenBytes === '' ? '' : self::fredReadExact($fp, unpack('n', $lenBytes)[1]);
+            fclose($fp);
+
+            $keys = $this->fredParseDnskeyResponse($resp);
+            if ($keys !== []) {
+                return $keys;
+            }
+        }
+
+        return [];
+    }
+
+    /** @return array{nsset:string,keyset:string} */
+    private function fredDomainLinks($epp, string $domainName): array
+    {
+        $r = $this->fredRaw(
+            $epp,
+            '<info><domain:info xmlns:domain="' . self::FRED_DOMAIN_NS . '" xsi:schemaLocation="' . self::FRED_DOMAIN_NS
+            . ' domain-1.4.2.xsd"><domain:name>' . htmlspecialchars($domainName) . '</domain:name></domain:info></info>',
+            'domain-info'
+        );
+
+        $inf = $r->response->resData->children(self::FRED_DOMAIN_NS)->infData;
+
+        return ['nsset' => trim((string) $inf->nsset), 'keyset' => trim((string) $inf->keyset)];
+    }
+
+    /** @return array{keys: list<array{flags:int,protocol:int,alg:int,pubKey:string}>, tech: list<string>} */
+    private function fredKeysetInfo($epp, string $id): array
+    {
+        $r = $this->fredRaw(
+            $epp,
+            '<info><keyset:info xmlns:keyset="' . self::FRED_KEYSET_NS . '" xsi:schemaLocation="' . self::FRED_KEYSET_NS
+            . ' keyset-1.3.4.xsd"><keyset:id>' . htmlspecialchars($id) . '</keyset:id></keyset:info></info>',
+            'keyset-info'
+        );
+
+        $inf = $r->response->resData->children(self::FRED_KEYSET_NS)->infData;
+
+        $keys = [];
+        foreach ($inf->dnskey as $k) {
+            $keys[] = [
+                'flags' => (int) $k->flags,
+                'protocol' => (int) $k->protocol,
+                'alg' => (int) $k->alg,
+                'pubKey' => preg_replace('/\s+/', '', (string) $k->pubKey),
+            ];
+        }
+
+        $tech = [];
+        foreach ($inf->tech as $t) {
+            $tech[] = (string) $t;
+        }
+
+        return ['keys' => $keys, 'tech' => $tech];
+    }
+
+    private static function fredKeysXml(array $keys): string
+    {
+        $xml = '';
+        foreach ($keys as $k) {
+            $xml .= '<keyset:dnskey><keyset:flags>' . (int) $k['flags'] . '</keyset:flags><keyset:protocol>'
+                . (int) $k['protocol'] . '</keyset:protocol><keyset:alg>' . (int) $k['alg']
+                . '</keyset:alg><keyset:pubKey>' . htmlspecialchars($k['pubKey']) . '</keyset:pubKey></keyset:dnskey>';
+        }
+
+        return $xml;
+    }
+
+    private function fredKeysetCreate($epp, string $id, array $keys, array $tech): void
+    {
+        $techXml = '';
+        foreach ($tech as $t) {
+            $techXml .= '<keyset:tech>' . htmlspecialchars($t) . '</keyset:tech>';
+        }
+
+        $this->fredRaw(
+            $epp,
+            '<create><keyset:create xmlns:keyset="' . self::FRED_KEYSET_NS . '" xsi:schemaLocation="' . self::FRED_KEYSET_NS
+            . ' keyset-1.3.4.xsd"><keyset:id>' . htmlspecialchars($id) . '</keyset:id>' . self::fredKeysXml($keys) . $techXml
+            . '</keyset:create></create>',
+            'keyset-create'
+        );
+    }
+
+    private function fredKeysetUpdate($epp, string $id, array $add, array $rem): void
+    {
+        $this->fredRaw(
+            $epp,
+            '<update><keyset:update xmlns:keyset="' . self::FRED_KEYSET_NS . '" xsi:schemaLocation="' . self::FRED_KEYSET_NS
+            . ' keyset-1.3.4.xsd"><keyset:id>' . htmlspecialchars($id) . '</keyset:id>'
+            . ($add ? '<keyset:add>' . self::fredKeysXml($add) . '</keyset:add>' : '')
+            . ($rem ? '<keyset:rem>' . self::fredKeysXml($rem) . '</keyset:rem>' : '')
+            . '</keyset:update></update>',
+            'keyset-update'
+        );
+    }
+
+    private function fredKeysetDelete($epp, string $id): void
+    {
+        $this->fredRaw(
+            $epp,
+            '<delete><keyset:delete xmlns:keyset="' . self::FRED_KEYSET_NS . '" xsi:schemaLocation="' . self::FRED_KEYSET_NS
+            . ' keyset-1.3.4.xsd"><keyset:id>' . htmlspecialchars($id) . '</keyset:id></keyset:delete></delete>',
+            'keyset-delete'
+        );
+    }
+
+    /** Links the domain to a keyset, or unlinks it when $id is null. */
+    private function fredDomainSetKeyset($epp, string $domainName, ?string $id): void
+    {
+        $this->fredRaw(
+            $epp,
+            '<update><domain:update xmlns:domain="' . self::FRED_DOMAIN_NS . '" xsi:schemaLocation="' . self::FRED_DOMAIN_NS
+            . ' domain-1.4.2.xsd"><domain:name>' . htmlspecialchars($domainName) . '</domain:name><domain:chg>'
+            . ($id === null ? '<domain:keyset/>' : '<domain:keyset>' . htmlspecialchars($id) . '</domain:keyset>')
+            . '</domain:chg></domain:update></update>',
+            'domain-update-keyset'
+        );
+    }
+
+    /** @return list<array{key_tag:int,algorithm:int,digest_type:int,digest:string}> */
+    private function fredGetDnssec(Registrar_Domain $domain): array
+    {
+        $epp = null;
+
+        try {
+            $epp = $this->epp_client();
+            $domainName = $this->fredIdn($domain->getName());
+
+            $links = $this->fredDomainLinks($epp, $domainName);
+            if ($links['keyset'] === '') {
+                return [];
+            }
+
+            $records = [];
+            foreach ($this->fredKeysetInfo($epp, $links['keyset'])['keys'] as $key) {
+                $ds = $this->fredDnskeyToDs($domainName, $key, 2);
+                if ($ds !== null) {
+                    $records[] = $ds;
+                }
+            }
+
+            return $records;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception('DNSSEC record lookup failed. Please try again later.');
+        } finally {
+            if ($epp !== null) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $params the DomainX parameters (record 1 = add or remove, record 2 = added by addrem) */
+    private function fredUpdateDnssec(Registrar_Domain $domain, string $command, array $params): array
+    {
+        $ds = static fn (string $n): array => [
+            'key_tag' => (int) $params['keyTag_' . $n],
+            'algorithm' => (int) $params['alg_' . $n],
+            'digest_type' => (int) $params['digestType_' . $n],
+            'digest' => strtoupper(preg_replace('/\s+/', '', (string) $params['digest_' . $n])),
+        ];
+
+        $toRemove = $command === 'add' ? null : $ds('1');
+        $toAdd = $command === 'rem' ? null : ($command === 'add' ? $ds('1') : $ds('2'));
+
+        $epp = null;
+
+        try {
+            $epp = $this->epp_client();
+            $domainName = $this->fredIdn($domain->getName());
+
+            $links = $this->fredDomainLinks($epp, $domainName);
+            if ($links['nsset'] === '') {
+                throw new Registrar_Exception('This domain has no nsset in the registry.');
+            }
+
+            $cur = ['keys' => [], 'tech' => []];
+            if ($links['keyset'] !== '') {
+                $cur = $this->fredKeysetInfo($epp, $links['keyset']);
+            }
+
+            $matches = static fn (array $d, array $k, self $self): bool => ($c = $self->fredDnskeyToDs($domainName, $k, $d['digest_type'])) !== null
+                && $c['key_tag'] === $d['key_tag'] && $c['algorithm'] === $d['algorithm'] && $c['digest'] === $d['digest'];
+
+            // Keys that stay: everything currently set, minus the key behind the removed DS.
+            $keep = [];
+            $removed = [];
+            foreach ($cur['keys'] as $k) {
+                if ($toRemove !== null && $matches($toRemove, $k, $this)) {
+                    $removed[] = $k;
+                } else {
+                    $keep[] = $k;
+                }
+            }
+            if ($toRemove !== null && $removed === []) {
+                throw new Registrar_Exception('The DS record to remove is not registered for this domain.');
+            }
+
+            // Keys to add: DNSKEYs published by the domain's nameservers that produce the given DS.
+            $added = [];
+            if ($toAdd !== null) {
+                $nsInfo = $this->fredNssetInfo($epp, $links['nsset']);
+                $found = $this->fredFetchDnskeys($domainName, $nsInfo['ns']);
+                foreach ($found as $k) {
+                    if ($matches($toAdd, $k, $this)) {
+                        $added[self::fredKeyId($k)] = $k;
+                    }
+                }
+                if ($added === []) {
+                    throw new Registrar_Exception(
+                        $found === []
+                            ? 'No DNSKEY could be read from the nameservers of this domain. FRED needs the public key, '
+                                . 'so sign the zone, make sure the nameservers answer DNSKEY queries and try again.'
+                            : 'None of the DNSKEYs published by the nameservers match this DS record.'
+                    );
+                }
+            }
+
+            $have = [];
+            foreach ($keep as $k) {
+                $have[self::fredKeyId($k)] = true;
+            }
+            $new = $keep;
+            $addNew = [];
+            foreach ($added as $id => $k) {
+                if (!isset($have[$id])) {
+                    $new[] = $k;
+                    $addNew[] = $k;
+                }
+            }
+
+            if (count($new) > 10) {
+                throw new Registrar_Exception('FRED allows at most ten DNSKEYs per domain.');
+            }
+
+            if ($addNew === [] && $removed === []) {
+                return ['code' => 1000, 'msg' => 'Command completed successfully'];
+            }
+
+            if ($new === []) {
+                // Last key removed: unlink first, then drop the keyset.
+                $this->fredDomainSetKeyset($epp, $domainName, null);
+                try {
+                    $this->fredKeysetDelete($epp, $links['keyset']);
+                } catch (\Throwable $ignored) {
+                }
+            } elseif ($links['keyset'] === '') {
+                $prefix = strtoupper(trim((string) ($this->config['registrarprefix'] ?? '')));
+                $newId = 'KSID-' . strtoupper($this->epp_random_contact_id()) . ($prefix !== '' ? '-' . $prefix : '');
+                $tech = $this->fredNssetInfo($epp, $links['nsset'])['tech'];
+
+                $this->fredKeysetCreate($epp, $newId, $new, $tech);
+                try {
+                    $this->fredDomainSetKeyset($epp, $domainName, $newId);
+                } catch (\Throwable $e) {
+                    try {
+                        $this->fredKeysetDelete($epp, $newId);
+                    } catch (\Throwable $ignored) {
+                    }
+                    throw $e;
+                }
+            } else {
+                $this->fredKeysetUpdate($epp, $links['keyset'], $addNew, $removed);
+            }
+
+            if (!empty($this->config['debug_log'])) {
+                $this->getLog()->debug('EPP FRED DNSSEC ' . $command . ' ' . $domain->getName() . ': ' . count($new) . ' key(s)');
+            }
+
+            return ['code' => 1000, 'msg' => 'Command completed successfully'];
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception('DNSSEC update failed. Please try again later.');
+        } finally {
+            if ($epp !== null) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
     public function getDNSSEC(Registrar_Domain $domain): array
     {
+        if (($this->config['registry_profile'] ?? 'generic') === 'FRED') {
+            return $this->fredGetDnssec($domain);
+        }
+
         $this->getLog()->debug('Getting DNSSEC records: ' . $domain->getName());
 
         try {
@@ -2302,6 +3156,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'Missing required DNSSEC field: ' . $field
                 );
             }
+        }
+
+        if (($this->config['registry_profile'] ?? 'generic') === 'FRED') {
+            return $this->fredUpdateDnssec($domain, $command, $params);
         }
 
         $domainName = $domain->getName();
@@ -2641,6 +3499,16 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             }
 
             $epp->setLoginExtensions($info['loginExtensions']);
+        }
+
+        if ($profile === 'FRED') {
+            // FRED (CZ.NIC) uses its own object mappings, not the RFC 5731/5733/5732 ones.
+            $epp->setLoginObjects([
+                'http://www.nic.cz/xml/epp/contact-1.6',
+                'http://www.nic.cz/xml/epp/domain-1.4',
+                'http://www.nic.cz/xml/epp/nsset-1.2',
+                'http://www.nic.cz/xml/epp/keyset-1.3',
+            ]);
         }
 
         if (empty($info['host']) || empty($info['port'])) {

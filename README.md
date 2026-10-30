@@ -23,6 +23,7 @@ This module is designed to work with both gTLD and ccTLD registries and provides
 | Domicilium | .im | | |
 | DRS.UA | all | | | |
 | EURid | .eu | EU | |
+| FRED | .cz/any | FRED | Registration, renewal, info, nameserver changes and glue (stored in the nsset). Min Data Set must be disabled. Registration sends the first two nameservers. DNSSEC via keysets: the DNSKEY is read from the domain's own nameservers and verified against the DS entered, so the zone must be signed and served first. |
 | GoDaddy Registry | all | | Min Data Set and gTLD Enabled (for gTLD) |
 | Google Nomulus | all | | Min Data Set and gTLD Enabled (for gTLD) |
 | Hello Registry | all | | Min Data Set and gTLD Enabled (for gTLD) |
@@ -53,7 +54,6 @@ This module is designed to work with both gTLD and ccTLD registries and provides
 | DENIC | .de | DE | |
 | DOMREG | .lt | LT | |
 | FORTH-ICS | .gr, .ελ | GR | |
-| FRED | .cz/any | FRED | |
 | NORID | .no | NO | |
 
 ### Paid Registry Support
