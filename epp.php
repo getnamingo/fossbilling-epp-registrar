@@ -771,14 +771,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $exDate = (string)$info['exDate'];
             $eppcode = (string)$info['authInfo'];
 
+            // Zero-based so $ns[0] maps to ns1 below (was 1-based, which shifted every nameserver by one).
             $ns = [];
-            $i = 1;
             foreach (($info['ns'] ?? []) as $nsa) {
                 if ($nsa === null || $nsa === '') {
                     continue;
                 }
-                $ns[$i] = (string) $nsa;
-                $i++;
+                $ns[] = (string) $nsa;
             }
 
             $crDate = strtotime($crDate);
@@ -838,9 +837,34 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
                 : $domain_name;
 
-            $domainDelete = $epp->domainDelete([
-                'domainname' => $domain_name,
-            ]);
+            if (($this->config['registry_profile'] ?? 'generic') === 'SE') {
+                // IIS does not delete .se/.nu domains with <domain:delete>; the registrar
+                // sets clientDelete via the iis-1.2 update extension, and the registry then
+                // deactivates and later deregisters the domain.
+                $clTRID = str_replace('.', '', (string) round(microtime(true), 3));
+                $domainDelete = $epp->rawXml([
+                    'xml' => '<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+    <update>
+      <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
+        <domain:name>' . htmlspecialchars($domain_name, ENT_XML1) . '</domain:name>
+      </domain:update>
+    </update>
+    <extension>
+      <iis:update xmlns:iis="urn:se:iis:xml:epp:iis-1.2">
+        <iis:clientDelete>1</iis:clientDelete>
+      </iis:update>
+    </extension>
+    <clTRID>' . htmlspecialchars(($this->config['registrarprefix'] ?: 'epp') . '-domain-clientDelete-' . $clTRID, ENT_XML1) . '</clTRID>
+  </command>
+</epp>',
+                ]);
+            } else {
+                $domainDelete = $epp->domainDelete([
+                    'domainname' => $domain_name,
+                ]);
+            }
 
             if (isset($domainDelete['error'])) {
                 throw new Registrar_Exception($domainDelete['error']);
@@ -874,6 +898,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         $roFields = ($this->config['registry_profile'] ?? 'generic') === 'RO'
             ? $this->getRoContactFields($client)
+            : [];
+
+        $seFields = ($this->config['registry_profile'] ?? 'generic') === 'SE'
+            ? $this->getSeContactFields($client)
             : [];
 
         try {
@@ -922,6 +950,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'PL'=> ['registrant'],
                     'GE'=> ['registrant'],
                     'RO'=> ['registrant'],
+                    // IIS: SeEpp::domainCreate sends only the registrant, so don't create unused contacts.
+                    'SE'=> ['registrant'],
                     'generic'=> ['registrant', 'admin', 'tech', 'billing'],
                     'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
                 ];
@@ -979,10 +1009,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         // EU-only extras
                         'euType'    => ($profile === 'EU') ? $contactType : null,
                         // SE-only extras
-                        'orgno'  => ($profile === 'SE') ? ($client->getCompanyNumber() ?? null) : null,
-                        'vatno' => ($profile === 'SE' && $client->getCompanyNumber())
-                            ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
-                            : null,
+                        'orgno'  => ($profile === 'SE') ? ($seFields['orgno'] ?? '') : null,
+                        'vatno' => ($profile === 'SE') ? ($seFields['vatno'] ?? '') : null,
                         // LV-only extras
                         'regNr' => ($profile === 'LV')
                             ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
@@ -2405,6 +2433,61 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 $this->epp_client_logout($epp);
             }
         }
+    }
+
+    /**
+     * IIS (.se/.nu) holder identifiers.
+     *
+     * orgno: the Company Number field, used for both organisationsnummer (companies)
+     * and personnummer (private holders). Swedish numbers are normalised to
+     * NNNNNN-NNNN; SeEpp adds the "[CC]" prefix itself.
+     * vatno: the client's Company VAT field as entered, never derived from orgno.
+     */
+    private function getSeContactFields(Registrar_Domain_Contact $contact): array
+    {
+        global $di;
+
+        $client = [];
+        $order = $this->_order ?? null;
+        $clientId = is_object($order) && method_exists($order, 'getClientId')
+            ? $order->getClientId()
+            : (is_object($order) ? ($order->client_id ?? null) : null);
+        if (!empty($clientId) && isset($di['pdo'])) {
+            $statement = $di['pdo']->prepare('SELECT * FROM client WHERE id = :id LIMIT 1');
+            $statement->execute(['id' => (int)$clientId]);
+            $client = $statement->fetch(\PDO::FETCH_ASSOC) ?: [];
+        }
+
+        $isCompany = trim((string)$contact->getCompany()) !== '';
+
+        // FOSSBilling's Company Number field holds the organisationsnummer for
+        // companies and the personnummer for private holders.
+        $orgno = trim((string)$contact->getCompanyNumber());
+
+        if ($orgno === '') {
+            throw new Registrar_Exception($isCompany
+                ? 'IIS requires the organisation number in the Company Number field.'
+                : 'IIS requires the personal identity number in the Company Number field.');
+        }
+
+        if (strtoupper((string)$contact->getCountry()) === 'SE') {
+            $digits = preg_replace('/\D+/', '', $orgno);
+            // Accept 12-digit forms (YYYYMMDDNNNN / 16NNNNNNNNNN) by dropping the century.
+            if (strlen($digits) === 12) {
+                $digits = substr($digits, 2);
+            }
+            if (strlen($digits) !== 10) {
+                throw new Registrar_Exception('Swedish personal/organisation number must have 10 digits (NNNNNN-NNNN).');
+            }
+            $orgno = substr($digits, 0, 6) . '-' . substr($digits, 6);
+        }
+
+        $vatno = $isCompany ? strtoupper(str_replace(' ', '', trim((string)($client['company_vat'] ?? '')))) : '';
+
+        return [
+            'orgno' => $orgno,
+            'vatno' => $vatno,
+        ];
     }
 
     private function getRoContactFields(Registrar_Domain_Contact $contact): array

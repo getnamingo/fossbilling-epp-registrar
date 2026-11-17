@@ -138,6 +138,16 @@ try {
             continue;
         }
 
+        // IIS answers domain:info for domains held by other registrars, so a domain
+        // transferred away would otherwise keep being synced as ours.
+        if (($config['registry_profile'] ?? 'generic') === 'SE'
+            && !empty($config['clid'])
+            && (string)($domainInfo['clID'] ?? '') !== ''
+            && (string)$domainInfo['clID'] !== (string)$config['clid']) {
+            echo 'Domain is sponsored by ' . $domainInfo['clID'] . ', not us; skipping ' . $domain . PHP_EOL;
+            continue;
+        }
+
         $ns = $domainInfo['ns'] ?? null;
         $ns1 = $ns2 = $ns3 = $ns4 = null;
 
