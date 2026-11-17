@@ -26,6 +26,348 @@ if (file_exists($autoload)) {
 use Symfony\Contracts\HttpClient\Exception\HttpExceptionInterface;
 use Pinga\Tembo\EppRegistryFactory;
 
+/*
+ * IIS (.se/.nu) EPP client used for the SE profile.
+ *
+ * Extends Tembo's SeEpp with the parts of iis-1.2 and registryLock-1.0 it lacks,
+ * following the schemas in IIS's own client (github.com/dotse/epp-client):
+ * domain:info with secDNS/iis/rl data, transfer without period, contact update
+ * with iis:update vatno, clientDelete, registry lock and registrant change.
+ *
+ * The class name starts with the adapter class name on purpose: the installer
+ * renames "Registrar_Adapter_EPP" per generated module, which keeps this class
+ * unique when several EPP modules are installed.
+ */
+if (class_exists(\Pinga\Tembo\Registries\SeEpp::class) && !class_exists('Registrar_Adapter_EPP_SeClient', false)) {
+    class Registrar_Adapter_EPP_SeClient extends \Pinga\Tembo\Registries\SeEpp
+    {
+        public const NS_DOMAIN = 'urn:ietf:params:xml:ns:domain-1.0';
+        public const NS_CONTACT = 'urn:ietf:params:xml:ns:contact-1.0';
+        public const NS_SECDNS = 'urn:ietf:params:xml:ns:secDNS-1.1';
+        public const NS_IIS = 'urn:se:iis:xml:epp:iis-1.2';
+        public const NS_RL = 'urn:se:iis:xml:epp:registryLock-1.0';
+
+        /** Announce registryLock-1.0 at login (only for registrars with the IIS registry lock service). */
+        public bool $registryLock = false;
+
+        protected function addLoginExtensions(\XMLWriter $xml): void
+        {
+            $xml->startElement('svcExtension');
+            $xml->writeElement('extURI', self::NS_SECDNS);
+            $xml->writeElement('extURI', self::NS_IIS);
+            if ($this->registryLock) {
+                $xml->writeElement('extURI', self::NS_RL);
+            }
+            $xml->endElement();
+        }
+
+        private static function x($value): string
+        {
+            return htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+        }
+
+        /** Sends a <command> body; Tembo's writeRequest throws on result codes >= 2000. */
+        private function seSend(string $body, string $op): \SimpleXMLElement
+        {
+            $clTRID = $this->prefix . '-' . $op . '-' . str_replace('.', '', (string) round(microtime(true), 3));
+
+            return $this->writeRequest('<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+' . $body . '
+    <clTRID>' . self::x($clTRID) . '</clTRID>
+  </command>
+</epp>');
+        }
+
+        private function seResult(\SimpleXMLElement $r, array $extra = []): array
+        {
+            return array_merge([
+                'code' => (int) $r->response->result->attributes()->code,
+                'msg' => (string) $r->response->result->msg,
+            ], $extra);
+        }
+
+        public function domainInfo($params = array())
+        {
+            if (!$this->isLoggedIn) {
+                return ['code' => 2002, 'msg' => 'Command use error'];
+            }
+
+            try {
+                $r = $this->seSend('    <info>
+      <domain:info xmlns:domain="' . self::NS_DOMAIN . '">
+        <domain:name hosts="all">' . self::x($params['domainname']) . '</domain:name>
+      </domain:info>
+    </info>', 'domain-info');
+
+                $d = $r->response->resData->children(self::NS_DOMAIN)->infData;
+
+                $status = [];
+                $i = 0;
+                foreach ($d->status as $e) {
+                    $status[++$i] = (string) $e->attributes()->s;
+                }
+                $contact = [];
+                $i = 0;
+                foreach ($d->contact as $e) {
+                    $i++;
+                    $contact[$i] = ['type' => (string) $e->attributes()->type, 'id' => (string) $e];
+                }
+                $ns = [];
+                $i = 0;
+                foreach (($d->ns->hostObj ?? []) as $hostObj) {
+                    $ns[++$i] = (string) $hostObj;
+                }
+                $host = [];
+                $i = 0;
+                foreach ($d->host as $h) {
+                    $host[++$i] = (string) $h;
+                }
+
+                $return = [
+                    'code' => (int) $r->response->result->attributes()->code,
+                    'msg' => (string) $r->response->result->msg,
+                    'name' => (string) $d->name,
+                    'roid' => (string) $d->roid,
+                    'status' => $status,
+                    'registrant' => (string) $d->registrant,
+                    'contact' => $contact,
+                    'ns' => $ns,
+                    'host' => $host,
+                    'clID' => (string) $d->clID,
+                    'crID' => (string) $d->crID,
+                    'crDate' => (string) $d->crDate,
+                    'upID' => (string) $d->upID,
+                    'upDate' => (string) $d->upDate,
+                    'exDate' => (string) $d->exDate,
+                    'trDate' => (string) $d->trDate,
+                    'authInfo' => (string) ($d->authInfo->pw ?? ''),
+                    'iis' => [],
+                    'rl' => [],
+                ];
+
+                if (isset($r->response->extension)) {
+                    $ext = $r->response->extension;
+
+                    $sec = $ext->children(self::NS_SECDNS)->infData ?? null;
+                    if ($sec !== null && $sec->count() > 0) {
+                        $dsData = [];
+                        foreach ($sec->dsData ?? [] as $ds) {
+                            $dsData[] = [
+                                'keyTag' => (int) $ds->keyTag,
+                                'alg' => (int) $ds->alg,
+                                'digestType' => (int) $ds->digestType,
+                                'digest' => (string) $ds->digest,
+                            ];
+                        }
+                        if ($dsData) {
+                            $return['dsData'] = $dsData;
+                        }
+                    }
+
+                    $iis = $ext->children(self::NS_IIS)->infData ?? null;
+                    if ($iis !== null && $iis->count() > 0) {
+                        $return['iis'] = [
+                            'state' => (string) $iis->state,
+                            'deactDate' => (string) $iis->deactDate,
+                            'delDate' => (string) $iis->delDate,
+                            'relDate' => (string) $iis->relDate,
+                            'clientDelete' => in_array(strtolower((string) $iis->clientDelete), ['1', 'true'], true),
+                        ];
+                    }
+
+                    $rl = $ext->children(self::NS_RL)->infData ?? null;
+                    if ($rl !== null && $rl->count() > 0) {
+                        $return['rl'] = [
+                            'locked' => in_array(strtolower((string) $rl->locked), ['1', 'true'], true),
+                            'unlockedUntil' => (string) $rl->unlockedUntil,
+                        ];
+                    }
+                }
+
+                return $return;
+            } catch (\Exception $e) {
+                return ['error' => $e->getMessage()];
+            }
+        }
+
+        /** IIS transfers take no period (iis-1.2 has no renew-on-transfer); other ops use the parent. */
+        public function domainTransfer($params = array())
+        {
+            if (($params['op'] ?? '') !== 'request') {
+                return parent::domainTransfer($params);
+            }
+            if (!$this->isLoggedIn) {
+                return ['code' => 2002, 'msg' => 'Command use error'];
+            }
+
+            try {
+                $r = $this->seSend('    <transfer op="request">
+      <domain:transfer xmlns:domain="' . self::NS_DOMAIN . '">
+        <domain:name>' . self::x($params['domainname']) . '</domain:name>
+        <domain:authInfo>
+          <domain:pw>' . self::x($params['authInfoPw']) . '</domain:pw>
+        </domain:authInfo>
+      </domain:transfer>
+    </transfer>', 'domain-transfer');
+
+                return $this->seResult($r);
+            } catch (\Exception $e) {
+                return ['error' => $e->getMessage()];
+            }
+        }
+
+        /** Contact info including iis:infData (orgno/vatno). */
+        public function contactInfoSe(string $id): array
+        {
+            try {
+                $r = $this->seSend('    <info>
+      <contact:info xmlns:contact="' . self::NS_CONTACT . '">
+        <contact:id>' . self::x($id) . '</contact:id>
+      </contact:info>
+    </info>', 'contact-info');
+
+                $c = $r->response->resData->children(self::NS_CONTACT)->infData;
+                $postal = $c->postalInfo[0] ?? null;
+                $iis = isset($r->response->extension)
+                    ? ($r->response->extension->children(self::NS_IIS)->infData ?? null)
+                    : null;
+
+                return $this->seResult($r, [
+                    'id' => (string) $c->id,
+                    'name' => $postal ? (string) $postal->name : '',
+                    'org' => $postal ? (string) $postal->org : '',
+                    'orgno' => $iis ? (string) $iis->orgno : '',
+                    'vatno' => $iis ? (string) $iis->vatno : '',
+                ]);
+            } catch (\Exception $e) {
+                return ['error' => $e->getMessage()];
+            }
+        }
+
+        /**
+         * Updates address, phone and e-mail, plus vatno via iis:update.
+         * Name/org are only sent when 'include_name' is set; a different holder is a
+         * registrant change, not a contact update (see domainChangeRegistrant).
+         */
+        public function contactUpdate($params = array())
+        {
+            if (!$this->isLoggedIn) {
+                return ['code' => 2002, 'msg' => 'Command use error'];
+            }
+
+            try {
+                $streets = '';
+                foreach (['address1', 'address2', 'address3'] as $k) {
+                    if (trim((string) ($params[$k] ?? '')) !== '') {
+                        $streets .= '              <contact:street>' . self::x($params[$k]) . "</contact:street>\n";
+                    }
+                }
+                $name = '';
+                if (!empty($params['include_name'])) {
+                    $name = '            <contact:name>' . self::x(trim(($params['firstname'] ?? '') . ' ' . ($params['lastname'] ?? ''))) . "</contact:name>\n";
+                    if (trim((string) ($params['companyname'] ?? '')) !== '') {
+                        $name .= '            <contact:org>' . self::x($params['companyname']) . "</contact:org>\n";
+                    }
+                }
+                $optional = function (string $tag, $value): string {
+                    return trim((string) $value) !== ''
+                        ? '              <contact:' . $tag . '>' . self::x($value) . '</contact:' . $tag . ">\n"
+                        : '';
+                };
+                $type = (($params['type'] ?? 'loc') === 'int') ? 'int' : 'loc';
+
+                $chg = '          <contact:postalInfo type="' . $type . '">' . "\n"
+                    . $name
+                    . "            <contact:addr>\n"
+                    . $streets
+                    . '              <contact:city>' . self::x($params['city'] ?? '') . "</contact:city>\n"
+                    . $optional('sp', $params['state'] ?? '')
+                    . $optional('pc', $params['postcode'] ?? '')
+                    . '              <contact:cc>' . self::x(strtoupper((string) ($params['country'] ?? ''))) . "</contact:cc>\n"
+                    . "            </contact:addr>\n"
+                    . "          </contact:postalInfo>\n";
+                if (trim((string) ($params['fullphonenumber'] ?? '')) !== '') {
+                    $chg .= '          <contact:voice>' . self::x($params['fullphonenumber']) . "</contact:voice>\n";
+                }
+                if (trim((string) ($params['email'] ?? '')) !== '') {
+                    $chg .= '          <contact:email>' . self::x($params['email']) . "</contact:email>\n";
+                }
+
+                $ext = '';
+                if (trim((string) ($params['vatno'] ?? '')) !== '') {
+                    $ext = '
+    <extension>
+      <iis:update xmlns:iis="' . self::NS_IIS . '">
+        <iis:vatno>' . self::x($params['vatno']) . '</iis:vatno>
+      </iis:update>
+    </extension>';
+                }
+
+                $r = $this->seSend('    <update>
+      <contact:update xmlns:contact="' . self::NS_CONTACT . '">
+        <contact:id>' . self::x($params['id']) . '</contact:id>
+        <contact:chg>
+' . $chg . '        </contact:chg>
+      </contact:update>
+    </update>' . $ext, 'contact-update');
+
+                return $this->seResult($r);
+            } catch (\Exception $e) {
+                return ['error' => $e->getMessage()];
+            }
+        }
+
+        /** Holder change: point the domain at another (new) registrant contact. */
+        public function domainChangeRegistrant(string $domain, string $contactId): array
+        {
+            return $this->domainUpdateSe($domain, '        <domain:chg>
+          <domain:registrant>' . self::x($contactId) . '</domain:registrant>
+        </domain:chg>', '', 'domain-update-registrant');
+        }
+
+        /** Registrar-initiated deactivation (iis:clientDelete); $clientDelete=false cancels it. */
+        public function domainClientDelete(string $domain, bool $clientDelete = true, bool $atExpDate = false): array
+        {
+            return $this->domainUpdateSe($domain, '', '
+      <iis:update xmlns:iis="' . self::NS_IIS . '">
+        <iis:clientDelete atExpDate="' . ($atExpDate ? 'true' : 'false') . '">' . ($clientDelete ? '1' : '0') . '</iis:clientDelete>
+      </iis:update>', 'domain-clientDelete');
+        }
+
+        /** Activates IIS registry lock; unlocking happens out of band or with the unlock password, not via EPP. */
+        public function domainRegistryLock(string $domain, string $unlock = 'outofband'): array
+        {
+            $unlock = $unlock === 'password' ? 'password' : 'outofband';
+
+            return $this->domainUpdateSe($domain, '', '
+      <rl:lock xmlns:rl="' . self::NS_RL . '">
+        <rl:unlock>' . $unlock . '</rl:unlock>
+      </rl:lock>', 'domain-registryLock');
+        }
+
+        private function domainUpdateSe(string $domain, string $domainBody, string $extension, string $op): array
+        {
+            if (!$this->isLoggedIn) {
+                return ['code' => 2002, 'msg' => 'Command use error'];
+            }
+
+            try {
+                $r = $this->seSend('    <update>
+      <domain:update xmlns:domain="' . self::NS_DOMAIN . '">
+        <domain:name>' . self::x($domain) . '</domain:name>
+' . ($domainBody !== '' ? $domainBody . "\n" : '') . '      </domain:update>
+    </update>' . ($extension !== '' ? "\n    <extension>" . $extension . "\n    </extension>" : ''), $op);
+
+                return $this->seResult($r);
+            } catch (\Exception $e) {
+                return ['error' => $e->getMessage()];
+            }
+        }
+    }
+}
+
 class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 {
     public $config = array();
@@ -77,6 +419,12 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
             // NASK
             'pl_contact_prefix' => $options['pl_contact_prefix'] ?? null,
+
+            // IIS (.se/.nu)
+            'se_registry_lock' => in_array($options['se_registry_lock'] ?? '', ['outofband', 'password'], true)
+                ? $options['se_registry_lock'] : '',
+            'se_holder_change' => !empty($options['se_holder_change']),
+            'se_delete_at_expiry' => !empty($options['se_delete_at_expiry']),
 
             'debug_log' => !empty($options['debug_log']),
             'debug_log_path' => $options['debug_log_path'] ?? (__DIR__ . '/../log'),
@@ -268,6 +616,31 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'required'    => false,
                     'default'     => '',
                     'description' => 'Optional contact ID prefix for NASK (.pl). Used when EPP profile is PL.',
+                ]],
+
+                'se_registry_lock' => ['select', [
+                    'label' => 'IIS (.se/.nu) Registry Lock',
+                    'default' => '',
+                    'multiOptions' => [
+                        '' => 'Not used (lock = clientTransfer/DeleteProhibited)',
+                        'outofband' => 'Registry lock, unlocked out of band',
+                        'password' => 'Registry lock, unlocked with password',
+                    ],
+                    'description' => 'SE only. Requires the IIS registry lock service. Lock activates registryLock-1.0; unlocking is done at IIS, not via EPP.',
+                ]],
+
+                'se_holder_change' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label' => 'IIS (.se/.nu) Allow Holder Change',
+                    'default' => '0',
+                    'description' => 'SE only. When the Company Number (orgno) differs from the registrant at IIS, create a new registrant contact and move the domain to it. Leave off if holder changes must be verified manually first.',
+                ]],
+
+                'se_delete_at_expiry' => ['radio', [
+                    'multiOptions' => ['1' => 'Yes', '0' => 'No'],
+                    'label' => 'IIS (.se/.nu) Deactivate at Expiry',
+                    'default' => '0',
+                    'description' => 'SE only. Delete sets iis:clientDelete with atExpDate=true (deactivate at expiry) instead of deactivating immediately.',
                 ]],
 
                 'ro_person_type_field' => ['select', [
@@ -771,14 +1144,13 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
             $exDate = (string)$info['exDate'];
             $eppcode = (string)$info['authInfo'];
 
+            // Zero-based so $ns[0] maps to ns1 below (was 1-based, which shifted every nameserver by one).
             $ns = [];
-            $i = 1;
             foreach (($info['ns'] ?? []) as $nsa) {
                 if ($nsa === null || $nsa === '') {
                     continue;
                 }
-                $ns[$i] = (string) $nsa;
-                $i++;
+                $ns[] = (string) $nsa;
             }
 
             $crDate = strtotime($crDate);
@@ -803,7 +1175,7 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     $statuses,
                     fn($carry, $s) => $carry || str_ends_with((string)$s, 'Prohibited'),
                     false
-                )
+                ) || !empty($info['rl']['locked'])
             );
 
             $domain->setPrivacyEnabled(
@@ -838,9 +1210,19 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
                 : $domain_name;
 
-            $domainDelete = $epp->domainDelete([
-                'domainname' => $domain_name,
-            ]);
+            if (($this->config['registry_profile'] ?? 'generic') === 'SE') {
+                // IIS: the registrar deactivates with iis:clientDelete (domain:update);
+                // the registry then deactivates and later deregisters the domain.
+                $domainDelete = $epp->domainClientDelete(
+                    $domain_name,
+                    true,
+                    !empty($this->config['se_delete_at_expiry'])
+                );
+            } else {
+                $domainDelete = $epp->domainDelete([
+                    'domainname' => $domain_name,
+                ]);
+            }
 
             if (isset($domainDelete['error'])) {
                 throw new Registrar_Exception($domainDelete['error']);
@@ -874,6 +1256,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         $roFields = ($this->config['registry_profile'] ?? 'generic') === 'RO'
             ? $this->getRoContactFields($client)
+            : [];
+
+        $seFields = ($this->config['registry_profile'] ?? 'generic') === 'SE'
+            ? $this->getSeContactFields($client)
             : [];
 
         try {
@@ -922,6 +1308,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                     'PL'=> ['registrant'],
                     'GE'=> ['registrant'],
                     'RO'=> ['registrant'],
+                    // IIS: SeEpp::domainCreate sends only the registrant, so don't create unused contacts.
+                    'SE'=> ['registrant'],
                     'generic'=> ['registrant', 'admin', 'tech', 'billing'],
                     'VRSN'   => ['registrant', 'admin', 'tech', 'billing'],
                 ];
@@ -944,6 +1332,9 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 foreach ($contactTypes as $i => $contactType) {
 
                     $id = strtoupper($this->epp_random_contact_id()) . ($registrarPrefix !== '' ? '-' . $registrarPrefix : '');
+                    if ($profile === 'SE') {
+                        $id = $this->seContactId();
+                    }
                     if ($profile === 'PL') {
                         $prefix = trim($this->config['pl_contact_prefix'] ?? '');
 
@@ -979,10 +1370,8 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                         // EU-only extras
                         'euType'    => ($profile === 'EU') ? $contactType : null,
                         // SE-only extras
-                        'orgno'  => ($profile === 'SE') ? ($client->getCompanyNumber() ?? null) : null,
-                        'vatno' => ($profile === 'SE' && $client->getCompanyNumber())
-                            ? strtoupper($client->getCountry()) . $client->getCompanyNumber()
-                            : null,
+                        'orgno'  => ($profile === 'SE') ? ($seFields['orgno'] ?? '') : null,
+                        'vatno' => ($profile === 'SE') ? ($seFields['vatno'] ?? '') : null,
                         // LV-only extras
                         'regNr' => ($profile === 'LV')
                             ? ($client->getCompanyNumber() ? $client->getCompanyNumber() : ($client->getDocumentNr() ?? null))
@@ -1299,6 +1688,10 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
         if ($this->config['min_data_set'] === true) {
             throw new Registrar_Exception("To change contact information, please update your account profile.");
+        }
+
+        if (($this->config['registry_profile'] ?? 'generic') === 'SE') {
+            return $this->modifyContactSe($domain);
         }
 
         $client = $domain->getContactRegistrar();
@@ -1834,6 +2227,21 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
                 ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
                 : $domain_name;
 
+            if (($this->config['registry_profile'] ?? 'generic') === 'SE'
+                && ($this->config['se_registry_lock'] ?? '') !== '') {
+                $resp = $epp->domainRegistryLock($domain_name, $this->config['se_registry_lock']);
+                if (!empty($resp['error'])) {
+                    throw new Registrar_Exception((string)$resp['error']);
+                }
+                if (!empty($this->config['debug_log'])) {
+                    $this->getLog()->debug(
+                        'EPP domainRegistryLock ' . $domain->getName() . ': ' .
+                        json_encode($resp, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                    );
+                }
+                return $return;
+            }
+
             $info = $epp->domainInfo([
                 'domainname' => $domain_name,
             ]);
@@ -1919,6 +2327,14 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
 
     public function unlock(Registrar_Domain $domain)
     {
+        if (($this->config['registry_profile'] ?? 'generic') === 'SE'
+            && ($this->config['se_registry_lock'] ?? '') !== '') {
+            throw new Registrar_Exception(
+                'IIS registry lock cannot be released via EPP. Unlock it at IIS '
+                . (($this->config['se_registry_lock'] ?? '') === 'password' ? 'with the unlock password.' : 'out of band.')
+            );
+        }
+
         $this->getLog()->debug('Unlocking: ' . $domain->getName());
         $return = array();
         try {
@@ -2407,6 +2823,185 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
         }
     }
 
+    /**
+     * IIS (.se/.nu) contact update.
+     *
+     * Address, phone, e-mail and VAT number are updated on the current registrant.
+     * A different orgno (organisationsnummer/personnummer) is a holder change: a new
+     * registrant contact is created and the domain is moved to it, if allowed by
+     * the "Allow Holder Change" setting. Name/org are never changed in place.
+     */
+    private function modifyContactSe(Registrar_Domain $domain)
+    {
+        $client = $domain->getContactRegistrar();
+        $seFields = $this->getSeContactFields($client);
+        $country = strtoupper((string)$client->getCountry());
+        $phone = ($cc = preg_replace('/\D+/', '', (string) $client->getTelCc()))
+            && ($tel = preg_replace('/\D+/', '', (string) $client->getTel()))
+                ? '+' . $cc . '.' . $tel
+                : '';
+
+        $params = [
+            'type'            => 'loc',
+            'firstname'       => (string)$client->getFirstName(),
+            'lastname'        => (string)$client->getLastName(),
+            'companyname'     => (string)$client->getCompany(),
+            'address1'        => (string)$client->getAddress1(),
+            'address2'        => (string)$client->getAddress2(),
+            'address3'        => '',
+            'city'            => (string)$client->getCity(),
+            'state'           => (string)$client->getState(),
+            'postcode'        => (string)$client->getZip(),
+            'country'         => $country,
+            'fullphonenumber' => $phone,
+            'email'           => (string)$client->getEmail(),
+            'orgno'           => $seFields['orgno'],
+            'vatno'           => $seFields['vatno'],
+        ];
+
+        try {
+            $epp = $this->epp_client();
+            $domain_name = $domain->getName();
+            $domain_name = function_exists('idn_to_ascii')
+                ? (idn_to_ascii($domain_name, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: $domain_name)
+                : $domain_name;
+
+            $info = $epp->domainInfo(['domainname' => $domain_name]);
+            if (!empty($info['error'])) {
+                throw new Registrar_Exception((string)$info['error']);
+            }
+            $registrant = (string)($info['registrant'] ?? '');
+            if ($registrant === '') {
+                throw new Registrar_Exception('The domain has no registrant at IIS.');
+            }
+
+            $current = $epp->contactInfoSe($registrant);
+            if (!empty($current['error'])) {
+                throw new Registrar_Exception((string)$current['error']);
+            }
+
+            $normOrgno = fn($v) => preg_replace('/[^A-Z0-9]/', '', strtoupper((string)$v));
+            $newOrgno = '[' . $country . ']' . $seFields['orgno'];
+
+            // The orgno is the holder's legal identity. Name/org differences alone are
+            // not treated as a holder change, since contacts created elsewhere (e.g. by
+            // WHMCS) may format the name differently.
+            $holderChanged = $current['orgno'] !== '' && $normOrgno($current['orgno']) !== $normOrgno($newOrgno);
+
+            if ($holderChanged) {
+                if (empty($this->config['se_holder_change'])) {
+                    throw new Registrar_Exception(
+                        'The Company Number differs from the registrant\'s orgno at IIS. '
+                        . 'This is a holder change; enable "IIS (.se/.nu) Allow Holder Change" or perform it manually.'
+                    );
+                }
+
+                $newId = $this->seContactId();
+                $create = $epp->contactCreate(['id' => $newId] + $params);
+                if (!empty($create['error'])) {
+                    throw new Registrar_Exception((string)$create['error']);
+                }
+                $newId = (string)($create['id'] ?? '') !== '' ? (string)$create['id'] : $newId;
+
+                $result = $epp->domainChangeRegistrant($domain_name, $newId);
+                $logLabel = 'EPP domainChangeRegistrant';
+            } else {
+                $result = $epp->contactUpdate(['id' => $registrant] + $params);
+                $logLabel = 'EPP contactUpdate';
+            }
+
+            if (!empty($result['error'])) {
+                throw new Registrar_Exception((string)$result['error']);
+            }
+
+            if (!empty($this->config['debug_log'])) {
+                $this->getLog()->debug(
+                    $logLabel . ' ' . $domain->getName() . ': ' .
+                    json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                );
+            }
+
+            return true;
+        } catch (Registrar_Exception $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new Registrar_Exception('Contact update failed. Please try again later.');
+        } finally {
+            if (isset($epp)) {
+                $this->epp_client_logout($epp);
+            }
+        }
+    }
+
+    /** IIS contact IDs: random part plus "-PREFIX", at most 16 characters (EPP clIDType). */
+    private function seContactId(): string
+    {
+        $prefix = strtoupper(trim((string)($this->config['registrarprefix'] ?? '')));
+        if ($prefix === '') {
+            return $this->epp_random_contact_id(10);
+        }
+        if (strlen($prefix) > 12) {
+            throw new Registrar_Exception('Object ID Prefix is too long for IIS contact IDs (max 12 characters, 16 including the random part).');
+        }
+
+        return $this->epp_random_contact_id(min(10, 15 - strlen($prefix))) . '-' . $prefix;
+    }
+
+    /**
+     * IIS (.se/.nu) holder identifiers.
+     *
+     * orgno: the Company Number field, used for both organisationsnummer (companies)
+     * and personnummer (private holders). Swedish numbers are normalised to
+     * NNNNNN-NNNN; SeEpp adds the "[CC]" prefix itself.
+     * vatno: the client's Company VAT field as entered, never derived from orgno.
+     */
+    private function getSeContactFields(Registrar_Domain_Contact $contact): array
+    {
+        global $di;
+
+        $client = [];
+        $order = $this->_order ?? null;
+        $clientId = is_object($order) && method_exists($order, 'getClientId')
+            ? $order->getClientId()
+            : (is_object($order) ? ($order->client_id ?? null) : null);
+        if (!empty($clientId) && isset($di['pdo'])) {
+            $statement = $di['pdo']->prepare('SELECT * FROM client WHERE id = :id LIMIT 1');
+            $statement->execute(['id' => (int)$clientId]);
+            $client = $statement->fetch(\PDO::FETCH_ASSOC) ?: [];
+        }
+
+        $isCompany = trim((string)$contact->getCompany()) !== '';
+
+        // FOSSBilling's Company Number field holds the organisationsnummer for
+        // companies and the personnummer for private holders.
+        $orgno = trim((string)$contact->getCompanyNumber());
+
+        if ($orgno === '') {
+            throw new Registrar_Exception($isCompany
+                ? 'IIS requires the organisation number in the Company Number field.'
+                : 'IIS requires the personal identity number in the Company Number field.');
+        }
+
+        if (strtoupper((string)$contact->getCountry()) === 'SE') {
+            $digits = preg_replace('/\D+/', '', $orgno);
+            // Accept 12-digit forms (YYYYMMDDNNNN / 16NNNNNNNNNN) by dropping the century.
+            if (strlen($digits) === 12) {
+                $digits = substr($digits, 2);
+            }
+            if (strlen($digits) !== 10) {
+                throw new Registrar_Exception('Swedish personal/organisation number must have 10 digits (NNNNNN-NNNN).');
+            }
+            $orgno = substr($digits, 0, 6) . '-' . substr($digits, 6);
+        }
+
+        $vatno = $isCompany ? strtoupper(str_replace(' ', '', trim((string)($client['company_vat'] ?? '')))) : '';
+
+        return [
+            'orgno' => $orgno,
+            'vatno' => $vatno,
+        ];
+    }
+
     private function getRoContactFields(Registrar_Domain_Contact $contact): array
     {
         global $di;
@@ -2540,7 +3135,12 @@ class Registrar_Adapter_EPP extends Registrar_AdapterAbstract
     {
         $profile = $this->config['registry_profile'] ?? 'generic';
 
-        $epp = EppRegistryFactory::create($profile);
+        if ($profile === 'SE' && class_exists('Registrar_Adapter_EPP_SeClient', false)) {
+            $epp = new Registrar_Adapter_EPP_SeClient();
+            $epp->registryLock = ($this->config['se_registry_lock'] ?? '') !== '';
+        } else {
+            $epp = EppRegistryFactory::create($profile);
+        }
 
         if (!empty($this->config['debug_log'])) {
             if (
